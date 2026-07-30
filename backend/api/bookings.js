@@ -9,12 +9,15 @@ const SELF_SERVE_POSITIONS = [
   'หัวหน้าแผนกกิจกรรมร้านค้า'
 ];
 
+// bookings <-> booking_hotel_choices are joined BOTH ways (choices point at the booking,
+// and the booking points back at the one choice the admin picked), so the embed must name
+// the constraint explicitly or PostgREST refuses it as ambiguous.
 const BOOKING_SELECT = `
   id, team_code, branch_code, work_schedule_id, checkin_date, checkout_date, status,
   reject_reason, chosen_hotel_choice_id, confirmation_no, voucher_file_url, note,
   created_by_employee, created_at, updated_at,
   branches ( name, province, lat, lng ),
-  booking_hotel_choices ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
+  booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
   booking_guests ( id, team_code, employee_code, name, phone, gender ),
   booking_changes ( id, type, new_rooms, new_checkin, new_checkout, note, status, created_at )
 `;
