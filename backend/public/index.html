@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>ระบบจองที่พัก SMA</title>
+<style>
+  :root{--ink:#2b1b12;--muted:#8c7256;--line:#f0dfba;--paper:#fff8ea;--surface:#fff;
+    --brand:#e0272a;--brand2:#b01f22;--brand-soft:#fbe6e3;
+    --gold:#ffc72c;--gold-soft:#fff3d1;
+    --success:#1f9d57;--success-soft:#e3f5e9;
+    --amber:#c98a00;--amber-soft:#fbf1d6;
+    --danger:#a61b3d;--danger-soft:#f7dee1;
+    --male:#1b5aa8;--male-soft:#e2edf8;--female:#b23a72;--female-soft:#f8e3ee;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#f6e2ab;font-family:"Noto Sans Thai",system-ui,sans-serif;color:var(--ink);display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:18px 10px 40px}
+  .rolebar{display:flex;align-items:center;gap:10px;background:#fff;border-radius:999px;padding:8px 18px;margin-bottom:16px;box-shadow:0 2px 10px rgba(0,0,0,.08);font-size:12.5px;font-weight:600;color:var(--muted)}
+  .rolebar b{color:var(--ink)}
+  .rolebar .badge{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:var(--brand-soft);color:var(--brand)}
+  .rolebar a{color:var(--brand);font-weight:700;cursor:pointer;text-decoration:none;margin-left:4px}
+  .phone{width:390px;max-width:100%;height:800px;background:var(--paper);border-radius:38px;box-shadow:0 20px 50px rgba(0,0,0,.28);overflow:hidden;position:relative;border:10px solid #2a1810}
+  .statusbar{height:34px;background:var(--brand);display:flex;align-items:center;justify-content:space-between;padding:0 22px;color:#fff;font-size:12px;font-weight:600}
+  .appbar{background:var(--brand);color:#fff;padding:6px 16px 14px;display:flex;align-items:center;gap:10px;border-bottom:3px solid var(--gold)}
+  .appbar .back{font-size:20px;cursor:pointer;width:24px;opacity:.9}
+  .appbar h1{font-size:16px;margin:0;font-weight:700;flex:1}
+  .appbar .sub{font-size:11px;opacity:.8;font-weight:500}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column}
+  .body{flex:1;overflow-y:auto;padding:16px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+  .card h2{font-size:14px;margin:0 0 4px}
+  .label{font-size:11px;color:var(--muted);font-weight:600;margin-bottom:5px}
+  .val{font-size:15px;font-weight:600}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px}
+  .pill.soon{background:var(--danger-soft);color:var(--danger)}
+  .pill.ok{background:var(--success-soft);color:var(--success)}
+  .pill.wait{background:var(--amber-soft);color:var(--amber)}
+  .pill.area{background:#efe7f6;color:#6b3fa0}
+  .btn{display:block;width:100%;border:0;font-family:inherit;font-weight:700;font-size:15px;padding:14px;border-radius:14px;background:var(--brand);color:#fff;cursor:pointer;margin-top:4px}
+  .btn:active{transform:translateY(1px)}
+  .btn.ghost{background:#fff;color:var(--brand);border:1.5px solid var(--brand)}
+  .btn.danger{background:var(--danger)}
+  .btn:disabled{background:#c7c7c7;cursor:not-allowed}
+  .job{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:10px;cursor:pointer}
+  .job:active{background:#fff3da}
+  .job .d{background:var(--brand-soft);color:var(--brand);border-radius:11px;width:46px;height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;line-height:1.05}
+  .job .d small{font-size:9px;font-weight:600}
+  .job .g{flex:1}.job .g .t{font-weight:700;font-size:14px}.job .g .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .chev{color:#c3c3c3;font-size:18px}
+  .stepper{display:flex;align-items:center;border:1.5px solid var(--line);border-radius:12px;width:fit-content;overflow:hidden}
+  .stepper button{border:0;background:#fff;width:44px;height:44px;font-size:22px;color:var(--brand);cursor:pointer}
+  .stepper span{min-width:46px;text-align:center;font-weight:700;font-size:17px}
+  .hotel{display:flex;align-items:center;gap:10px;border:1.5px solid var(--line);border-radius:13px;padding:11px;margin-bottom:9px;cursor:pointer}
+  .hotel.sel{border-color:var(--brand);background:var(--brand-soft)}
+  .hotel .chk{width:21px;height:21px;border-radius:6px;border:2px solid #cfd8d3;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;font-weight:700}
+  .hotel.sel .chk{background:var(--brand);border-color:var(--brand)}
+  .hotel .n{flex:1}.hotel .n .t{font-weight:600;font-size:13.5px}.hotel .n .s{font-size:11px;color:var(--muted)}
+  .hotel .n .s a{color:var(--brand);font-weight:600}
+  .hotel .p{font-weight:700;font-size:14px}
+  .hotel.radio .chk{border-radius:50%}
+  .rmv{font-size:11px;color:var(--danger);font-weight:700;cursor:pointer}
+  .gt{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .gt.m{background:var(--male-soft);color:var(--male)}.gt.f{background:var(--female-soft);color:var(--female)}
+  input.txt,select.txt{width:100%;font-family:inherit;font-size:14px;padding:12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;color:var(--ink)}
+  textarea.txt{width:100%;font-family:inherit;font-size:14px;padding:12px;border:1.5px solid var(--line);border-radius:12px;resize:none;height:60px}
+  .warn{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;padding:11px;border-radius:12px;margin-bottom:9px;font-weight:600}
+  .warn.a{background:var(--amber-soft);color:#8a6200}.warn.d{background:var(--danger-soft);color:var(--danger)}.warn.g{background:var(--success-soft);color:var(--success)}
+  .roomgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .room{border-radius:13px;padding:11px;border:1.5px solid}
+  .room.m{background:var(--male-soft);border-color:#bcd7e6}.room.f{background:var(--female-soft);border-color:#e8c4da}
+  .room .rh{font-size:11px;font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between}
+  .room.m .rh{color:var(--male)}.room.f .rh{color:var(--female)}
+  .room .oc{font-size:12.5px;font-weight:600;line-height:1.5}
+  .room .empty{font-size:11px;font-weight:600;opacity:.7;font-style:italic}
+  .slot{border:1.5px solid var(--line);border-radius:12px;padding:10px;margin-bottom:8px}
+  .slot .sh{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;font-weight:700}
+  .slot .res{font-size:12px;color:var(--brand);font-weight:600;margin-top:6px}
+  .slot .res.no{color:var(--amber)}
+  .guestcard{background:#faf9f6;border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:8px}
+  .timeline{list-style:none;padding:0;margin:0}
+  .timeline li{display:flex;gap:12px;padding-bottom:16px;position:relative}
+  .timeline li:before{content:"";position:absolute;left:8px;top:20px;bottom:-4px;width:2px;background:var(--line)}
+  .timeline li:last-child:before{display:none}
+  .dot{width:18px;height:18px;border-radius:50%;border:3px solid var(--line);background:#fff;flex-shrink:0;margin-top:1px}
+  .timeline li.done .dot{background:var(--brand);border-color:var(--brand)}.timeline li.now .dot{border-color:var(--brand)}
+  .timeline .tt{font-weight:700;font-size:13.5px}.timeline .ts{font-size:11px;color:var(--muted)}.timeline li.dim{opacity:.45}
+  .copyrow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+  .copyrow:last-child{border-bottom:0}.copyrow .k{font-size:11px;color:var(--muted);font-weight:600;min-width:50px}
+  .copyrow .v{font-size:12.5px;font-weight:600;text-align:right;flex:1;margin:0 8px;line-height:1.4;word-break:break-word}
+  .copyrow .cp{font-size:11px;color:var(--brand);font-weight:700;border:1px solid var(--brand);border-radius:8px;padding:4px 8px;cursor:pointer;white-space:nowrap}
+  .hint{font-size:11px;color:var(--muted);margin:2px 0 12px}
+  .addnew{border:1.5px dashed var(--line);border-radius:12px;padding:11px;text-align:center;color:var(--brand);font-weight:700;font-size:13px;cursor:pointer;margin-top:6px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .chip{border:1.5px solid var(--line);border-radius:11px;padding:11px 12px;font-size:13px;font-weight:600;cursor:pointer;flex:1;text-align:center;min-width:44%}
+  .chip:active{background:#fff3da}
+  .toast{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:#2a1810;color:#fff;font-size:12.5px;font-weight:600;padding:10px 18px;border-radius:999px;opacity:0;transition:.3s;pointer-events:none;max-width:80%;text-align:center;z-index:50}
+  .toast.show{opacity:1}
+  .errtext{font-size:12.5px;color:var(--danger);font-weight:700;margin-top:8px}
+  .navlink{display:block;text-align:center;font-size:12.5px;font-weight:700;color:var(--brand);padding:10px;cursor:pointer;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="rolebar" id="rolebar">ระบบจองที่พัก SMA · เข้าสู่ระบบด้วยรหัสพนักงาน</div>
+<div class="phone">
+  <div class="statusbar"><span id="clock">9:41</span><span>SMA จองที่พัก</span><span>▲ 100%</span></div>
+  <div id="app"></div>
+  <div class="toast" id="toast"></div>
+</div>
+<script>
+/* =========================================================================
+   ระบบจองที่พักภาคสนาม SMA — เชื่อมฐานข้อมูลจริง (Supabase ผ่าน /api)
+   ข้อมูลทั้งหมดมาจาก API ไม่มีข้อมูลฝังในหน้านี้
+   ========================================================================= */
+
+const API = '/api';
+const SPECIAL_POS = ["ผู้บริหาร","แอดมิน","Sales & Marketing Division Manager","หัวหน้าแผนกกิจกรรมร้านค้า"];
+const THMONTH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+/* ---------------- reference data (filled by /api/bootstrap) ---------------- */
+let ME = null, IS_ADMIN = false;
+let BRANCHES = [], HOTELS = [], TEAMS = [], STAFF_LIST = [], SCHEDULE = [];
+let STAFF = {}, BRANCH_BY_CODE = {}, PROVINCES = [];
+let BOOKINGS = [];
+let S = {}, CH = {}, VOUCH = {}, REJ = {};
+
+const $ = s => document.querySelector(s);
+function toast(t){ const e=$("#toast"); e.textContent=t; e.classList.add("show"); setTimeout(()=>e.classList.remove("show"),2200); }
+function rerender(fn){ const b=document.querySelector('.body'); const y=b?b.scrollTop:0; fn(); const nb=document.querySelector('.body'); if(nb)nb.scrollTop=y; }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function nickOf(p){ return String(p&&(p.nickname||p.nick)||'').replace(/\s*[ชญ]\s*$/,'').trim() || (p&&p.name) || ''; }
+function isSpecialRole(pos){ return SPECIAL_POS.includes(pos); }
+function fmtDate(s){ if(!s) return "—"; const d=new Date(s); return d.getDate()+" "+THMONTH[d.getMonth()]+" "+(d.getFullYear()+543-2000); }
+function daysBetween(a,b){ if(!a||!b) return 0; return Math.max(0, Math.round((new Date(b)-new Date(a))/86400000)); }
+function haversine(lat1,lng1,lat2,lng2){
+  if(lat1==null||lng1==null||lat2==null||lng2==null) return null;
+  const R=6371, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLng=toRad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function tickClock(){
+  const el=$("#clock"); if(!el) return;
+  const d=new Date(); el.textContent = String(d.getHours()).padStart(2,'0')+":"+String(d.getMinutes()).padStart(2,'0');
+}
+setInterval(tickClock, 30000); tickClock();
+
+/* ---------------- API plumbing ---------------- */
+async function apiGet(path){
+  const r = await fetch(API+path, { headers:{ 'Accept':'application/json' } });
+  const j = await r.json().catch(()=>({ error:'ระบบตอบกลับไม่ถูกรูปแบบ' }));
+  if(!r.ok) throw new Error(j.error || ('โหลดข้อมูลไม่สำเร็จ ('+r.status+')'));
+  return j;
+}
+async function apiSend(path, method, body){
+  const r = await fetch(API+path, {
+    method,
+    headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
+    body: JSON.stringify(Object.assign({ actor: ME? ME.code : '' }, body||{}))
+  });
+  const j = await r.json().catch(()=>({ error:'ระบบตอบกลับไม่ถูกรูปแบบ' }));
+  if(!r.ok) throw new Error(j.error || ('บันทึกไม่สำเร็จ ('+r.status+')'));
+  return j;
+}
+
+function screenLoading(msg){
+  $("#app").innerHTML = `<div class="screen"><div class="appbar"><h1>${esc(msg||'กำลังโหลด…')}</h1></div>
+   <div class="body"><div class="hint" style="text-align:center;padding-top:40px">⏳ ${esc(msg||'กำลังโหลด…')}</div></div></div>`;
+}
+
+/* ---------------- normalise API shapes into what the UI expects ---------------- */
+function normHotel(h){
+  return { id:h.id, code:h.code, name:h.name, prov:h.province, near:h.near_area,
+           lat:h.lat==null?null:Number(h.lat), lng:h.lng==null?null:Number(h.lng),
+           price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
+           choowap:!!h.on_choowap };
+}
+function normBooking(b){
+  const guests = (b.booking_guests||[]).map(g=>({
+    id:g.id, g: g.gender==='F' ? 'f' : 'm', team:g.team_code, code:g.employee_code||'',
+    name:g.name, phone:g.phone||''
+  }));
+  const choices = (b.booking_hotel_choices||[]).slice().sort((x,y)=>(x.rank||0)-(y.rank||0)).map(c=>({
+    id:c.id,
+    name: c.hotels ? c.hotels.name : c.custom_name,
+    price: c.custom_price!=null ? Number(c.custom_price) : (c.hotels && c.hotels.default_price_per_night!=null ? Number(c.hotels.default_price_per_night) : null),
+    near: c.hotels ? c.hotels.near_area : null,
+    map: c.custom_map_link || '',
+    custom: !c.hotel_id
+  }));
+  const pending = (b.booking_changes||[]).filter(c=>c.status==='pending');
+  const ch = pending.length ? pending[pending.length-1] : null;
+  return {
+    id:b.id, guestList:guests, team:b.team_code, branchCode:b.branch_code,
+    branch: b.branches ? b.branches.name : b.branch_code,
+    prov: b.branches ? b.branches.province : null,
+    blat: b.branches && b.branches.lat!=null ? Number(b.branches.lat) : null,
+    blng: b.branches && b.branches.lng!=null ? Number(b.branches.lng) : null,
+    jobId:b.work_schedule_id, checkin:b.checkin_date, checkout:b.checkout_date,
+    status:b.status, rejectReason:b.reject_reason, note:b.note||'',
+    submittedByCode:b.created_by_employee, adhoc: !b.work_schedule_id,
+    src: b.team_code==='AREA' ? 'AREA' : 'SMA',
+    hotels: choices,
+    chosenChoiceId: b.chosen_hotel_choice_id,
+    voucher: b.status==='จองสำเร็จ' || b.confirmation_no ? { code:b.confirmation_no, url:b.voucher_file_url } : null,
+    change: ch ? { id:ch.id, type:ch.type, rooms:ch.new_rooms, newCheckin:ch.new_checkin, newCheckout:ch.new_checkout, note:ch.note } : null,
+    derived: b.derived || {}
+  };
+}
+function jobsForMyTeam(){
+  return SCHEDULE.filter(s=>s.team_code===ME.team_code).map(s=>{
+    const br = BRANCH_BY_CODE[s.branch_code] || {};
+    return { id:s.id, team:s.team_code, branchCode:s.branch_code, branch:br.name||s.branch_code,
+             prov:br.province||null,
+             blat: br.lat!=null?Number(br.lat):null, blng: br.lng!=null?Number(br.lng):null,
+             start:s.date_start, end:s.date_end, adv:s.advance_days||0 };
+  });
+}
+function staffOfTeam(team){
+  return STAFF_LIST.filter(s=>s.team_code===team).map(s=>({ code:s.code, name:s.name, nick:nickOf(s) }));
+}
+function findB(id){ return BOOKINGS.find(b=>b.id===id); }
+function pair(guests){
+  const f=guests.filter(x=>x.g==='f'), m=guests.filter(x=>x.g==='m'), r=[];
+  for(let i=0;i<f.length;i+=2) r.push({g:'f',p:f.slice(i,i+2)});
+  for(let i=0;i<m.length;i+=2) r.push({g:'m',p:m.slice(i,i+2)});
+  return r;
+}
+function pillOf(b){
+  if(b.change) return '<span class="pill soon">มีเรื่องแจ้ง</span>';
+  if(b.status==='ต้องแก้ไข') return '<span class="pill soon">ต้องแก้ไข</span>';
+  if(b.status==='จองสำเร็จ') return '<span class="pill ok">จองเสร็จแล้ว</span>';
+  if(b.status==='ติดปัญหา') return '<span class="pill soon">ติดปัญหา</span>';
+  if(b.status==='ดำเนินการจอง') return '<span class="pill wait">ดำเนินการจอง</span>';
+  return '<span class="pill wait">ส่งคำขอ</span>';
+}
+
+/* ---------------- rolebar ---------------- */
+function updateRolebar(){
+  const bar=$("#rolebar");
+  if(!ME){ bar.innerHTML='ระบบจองที่พัก SMA · เข้าสู่ระบบด้วยรหัสพนักงาน'; return; }
+  const showAdhoc = IS_ADMIN || isSpecialRole(ME.position);
+  bar.innerHTML = `สวัสดี <b>${esc(nickOf(ME))}</b> · ${esc(ME.team_code)} <span class="badge">${esc(IS_ADMIN?'แอดมิน':ME.position||'พนักงาน')}</span>
+    ${showAdhoc?'<a onclick="openAdhocForm()">จองเพิ่ม</a>':''}
+    <a onclick="reloadBookings(true)">รีเฟรช</a>
+    <a onclick="logout()">ออกจากระบบ</a>`;
+}
+
+/* ---------------- login ---------------- */
+function renderLogin(err){
+  ME=null; IS_ADMIN=false; BOOKINGS=[]; updateRolebar();
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>เข้าใช้งาน</h1></div>
+   <div class="body"><div class="card"><div class="label">รหัสพนักงานของคุณ</div>
+    <input class="txt" id="code" placeholder="เช่น CMT2400114" autocomplete="off" onkeydown="if(event.key==='Enter')doLogin()"/>
+    ${err?`<div class="errtext">${esc(err)}</div>`:''}
+    <div class="hint" style="margin-top:8px">ใส่รหัสให้ตรงกับทะเบียนพนักงาน ระบบจะจำบัญชีให้</div></div>
+    <button class="btn" id="loginBtn" onclick="doLogin()">ยืนยันตัวตน</button>
+   </div></div>`;
+  const el=$("#code"); if(el) el.focus();
+}
+function logout(){ renderLogin(); }
+
+async function doLogin(){
+  const code=(($("#code")||{}).value||'').trim();
+  if(!code){ renderLogin('กรุณาใส่รหัสพนักงาน'); return; }
+  const btn=$("#loginBtn"); if(btn){ btn.disabled=true; btn.textContent='กำลังตรวจสอบ…'; }
+  try{
+    const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
+    ME = d.me;
+    IS_ADMIN = ME.position==='แอดมิน';
+    BRANCHES = d.branches||[];
+    HOTELS = (d.hotels||[]).map(normHotel);
+    TEAMS = (d.teams||[]).map(t=>t.code);
+    STAFF_LIST = d.staff||[];
+    SCHEDULE = d.schedule||[];
+    STAFF={}; STAFF_LIST.forEach(s=>{ STAFF[s.code]=s; });
+    BRANCH_BY_CODE={}; BRANCHES.forEach(b=>{ BRANCH_BY_CODE[b.code]=b; });
+    PROVINCES=[...new Set(HOTELS.filter(h=>h.prov).map(h=>h.prov))].sort();
+    updateRolebar();
+    await reloadBookings(false);
+    goHome();
+  }catch(e){
+    renderLogin(e.message);
+  }
+}
+
+async function reloadBookings(showToast){
+  if(!ME) return;
+  try{
+    const d = await apiGet('/bookings?scope='+(IS_ADMIN?'admin':'mine')+'&actor='+encodeURIComponent(ME.code));
+    BOOKINGS = (d.bookings||[]).map(normBooking);
+    if(showToast){ toast('อัปเดตข้อมูลล่าสุดแล้ว'); goHome(); }
+  }catch(e){
+    toast('โหลดรายการจองไม่สำเร็จ: '+e.message);
+  }
+}
+
+function goHome(){
+  if(IS_ADMIN) renderAdminQueue();
+  else if(isSpecialRole(ME.position)) renderSpecialHome();
+  else renderHome();
+}
+
+/* ================= พนักงาน ================= */
+function renderHome(){
+  const jobs=jobsForMyTeam();
+  const rows=jobs.map(j=>{
+    const already=BOOKINGS.find(b=>b.jobId===j.id);
+    const badge = already ? pillOf(already)
+      : (j.adv?`<span class="pill soon">เข้าก่อน ${j.adv} วัน</span>`:`<span class="pill ok">ยังไม่ได้จอง</span>`);
+    const d=new Date(j.start);
+    const onClick = already ? `renderStatus('${already.id}')` : `openForm('${j.id}')`;
+    return `<div class="job" onclick="${onClick}"><div class="d">${d.getDate()}<small>${THMONTH[d.getMonth()]}</small></div>
+     <div class="g"><div class="t">${esc(j.branch)}</div>
+      <div class="s">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.prov?(' · จ.'+esc(j.prov)):''}</div>
+      <div style="margin-top:5px">${badge}</div></div><div class="chev">›</div></div>`;
+  }).join("") || `<div class="hint">ยังไม่มีงานที่ต้องจองที่พักสำหรับทีม ${esc(ME.team_code)} ในขณะนี้</div>`;
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>งานที่ต้องจองที่พัก</h1><span class="sub">${esc(ME.team_code)}</span></div>
+   <div class="body"><div class="hint">แผนงานบอกว่าต้องไปสาขาไหน — วันเข้าพักคุณเลือกเองในฟอร์ม</div>${rows}</div></div>`;
+}
+
+function renderSpecialHome(){
+  const mine=BOOKINGS.filter(b=>b.submittedByCode===ME.code);
+  const rows=mine.map(b=>`<div class="job" onclick="renderStatus('${b.id}')">
+    <div class="d" style="background:var(--amber-soft);color:var(--amber)">${(b.derived.people!=null?b.derived.people:0)}<small>คน</small></div>
+    <div class="g"><div class="t">${esc(b.branch)}</div><div class="s">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
+     <div style="margin-top:5px">${pillOf(b)}</div></div><div class="chev">›</div></div>`).join("");
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>ขอที่พัก</h1><span class="sub">${esc(ME.team_code)}</span></div>
+   <div class="body"><div class="hint">ตำแหน่งนี้ไม่มีแผนงานทีม SMA ประจำ — เลือกสาขาที่จะไปและวันเข้าพักเองได้เลย</div>
+    <button class="btn" onclick="openAdhocForm()">+ จองเพิ่ม</button>
+    ${rows?`<div class="label" style="margin-top:18px">คำขอของฉัน</div>${rows}`:''}
+   </div></div>`;
+}
+
+/* ================= ฟอร์มขอที่พัก ================= */
+function openForm(scheduleId){
+  const j=jobsForMyTeam().find(x=>String(x.id)===String(scheduleId));
+  if(!j){ toast('ไม่พบงานนี้'); return; }
+  S={ editId:null, job:j, manualProv:null, checkin:j.start, checkout:j.end,
+      hotelPicks:[], addingHotel:false, newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", busy:false };
+  renderForm();
+}
+function openAdhocForm(){
+  S={ editId:null, job:{ id:null, branchCode:'', branch:'', prov:null, start:'', end:'', adv:0, blat:null, blng:null, adhoc:true },
+      manualProv:null, checkin:'', checkout:'', hotelPicks:[], addingHotel:false,
+      newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", busy:false };
+  renderForm();
+}
+function openFormEdit(id){
+  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); return; }
+  const stored = b.guestList || [];
+  const slots = [];
+  stored.filter(g=>g.g==='f').forEach((g,i)=>slots.push({ g:'f', idx:i, team:g.team||ME.team_code, code:g.code||'', name:g.name, phone:g.phone||'', manual:!g.code }));
+  stored.filter(g=>g.g==='m').forEach((g,i)=>slots.push({ g:'m', idx:i, team:g.team||ME.team_code, code:g.code||'', name:g.name, phone:g.phone||'', manual:!g.code }));
+  S={ editId:b.id,
+      job:{ id:b.jobId, branchCode:b.branchCode, branch:b.branch, prov:b.prov,
+            start:'', end:'', adv:0, blat:b.blat, blng:b.blng, adhoc:!b.jobId },
+      manualProv:b.prov, checkin:b.checkin, checkout:b.checkout,
+      // Re-point each saved choice back at the live registry entry so the picker highlights it.
+      hotelPicks: b.hotels.map(h=>{
+        if(h.custom) return { code:'CUSTOM-'+h.id, name:h.name, map:h.map, price:h.price, custom:true };
+        return HOTELS.find(x=>x.name===h.name) || { code:'REG-'+h.id, name:h.name, price:h.price, near:h.near };
+      }),
+      addingHotel:false, newHotelDraft:{n:'',map:'',p:''},
+      f: stored.filter(g=>g.g==='f').length,
+      m: stored.filter(g=>g.g==='m').length,
+      slots, note:b.note||"", busy:false };
+  renderForm();
+}
+function bookingGuestList(id){ const b=findB(id); return (b && b.guestList) || []; }
+
+function setManualProv(v){ S.manualProv=v; rerender(renderForm); }
+function setAdhocBranch(code){
+  const b=BRANCH_BY_CODE[code]; if(!b) return;
+  S.job.branchCode=b.code; S.job.branch=b.name; S.job.prov=b.province;
+  S.job.blat=b.lat!=null?Number(b.lat):null; S.job.blng=b.lng!=null?Number(b.lng):null;
+  rerender(renderForm);
+}
+function resetAdhocBranch(){ S.job.branchCode=''; S.job.branch=''; S.job.prov=null; S.job.blat=null; S.job.blng=null; rerender(renderForm); }
+function rebuildSlots(){
+  const s=[];
+  for(let i=0;i<S.f;i++) s.push(S.slots.find(x=>x.g==='f'&&x.idx===i) || {g:'f',idx:i,team:ME.team_code,code:'',name:'',phone:'',manual:false});
+  for(let i=0;i<S.m;i++) s.push(S.slots.find(x=>x.g==='m'&&x.idx===i) || {g:'m',idx:i,team:ME.team_code,code:'',name:'',phone:'',manual:false});
+  S.slots=s;
+}
+function collectGuests(){ return S.slots.map(s=>({ g:s.g, idx:s.idx, team:s.team, code:s.code, name:s.name, phone:s.phone })); }
+function chCount(g,d){ S[g]=Math.max(0,S[g]+d); rerender(renderForm); }
+function toggleHotel(code){
+  const h=HOTELS.find(x=>x.code===code); if(!h) return;
+  const i=S.hotelPicks.findIndex(x=>x.code===h.code);
+  if(i>=0) S.hotelPicks.splice(i,1);
+  else { if(S.hotelPicks.length>=3){ toast('เลือกได้สูงสุด 3 ที่พัก'); return; } S.hotelPicks.push(h); }
+  rerender(renderForm);
+}
+function removeHotelPick(code){ const i=S.hotelPicks.findIndex(x=>x.code===code); if(i>=0)S.hotelPicks.splice(i,1); rerender(renderForm); }
+function toggleAddHotelForm(){ S.addingHotel=!S.addingHotel; S.newHotelDraft={n:'',map:'',p:''}; rerender(renderForm); }
+function setNewHotelField(k,v){ if(!S.newHotelDraft)S.newHotelDraft={n:'',map:'',p:''}; S.newHotelDraft[k]=v; }
+function confirmNewHotel(){
+  const d=S.newHotelDraft||{};
+  if(!d.n || !d.p){ toast('กรอกชื่อที่พักและราคาก่อน'); return; }
+  if(S.hotelPicks.length>=3){ toast('เลือกได้สูงสุด 3 ที่พัก'); return; }
+  S.hotelPicks.push({ code:'NEW'+Date.now(), name:d.n, map:d.map||'', price:parseInt(d.p,10)||0, custom:true });
+  S.addingHotel=false; S.newHotelDraft={n:'',map:'',p:''};
+  rerender(renderForm);
+}
+function setSlotTeam(i,v){ S.slots[i].team=v; S.slots[i].code=''; S.slots[i].name=''; S.slots[i].phone=''; S.slots[i].manual=false; rerender(renderForm); }
+function setSlotCode(i,v){
+  if(v==='__manual__'){ S.slots[i].code=''; S.slots[i].manual=true; S.slots[i].name=''; S.slots[i].phone=''; }
+  else{
+    S.slots[i].code=v; S.slots[i].manual=false;
+    const st=STAFF[v];
+    if(st){ S.slots[i].name=st.name+' ('+nickOf(st)+')'; S.slots[i].phone=st.phone||''; }
+  }
+  rerender(renderForm);
+}
+function setSlotManualField(i,k,v){ S.slots[i][k]=v; } // silent — typing must never re-render
+
+function renderForm(){
+  const j=S.job;
+  const effProv = S.manualProv || j.prov;
+  rebuildSlots();
+
+  const needProvPicker = !effProv && (!j.adhoc || j.branchCode);
+  const provPicker = needProvPicker ? `<div class="card"><div class="label">⚠️ สาขานี้ยังไม่มีจังหวัดในทะเบียน — เลือกจังหวัดเอง</div>
+    <select class="txt" onchange="setManualProv(this.value)">
+     <option value="">— เลือกจังหวัด —</option>
+     ${PROVINCES.map(p=>`<option value="${esc(p)}" ${S.manualProv===p?'selected':''}>${esc(p)}</option>`).join("")}
+    </select></div>` : '';
+
+  const byProv={};
+  BRANCHES.forEach(b=>{ const k=b.province||'ยังไม่ระบุจังหวัด'; (byProv[k]=byProv[k]||[]).push(b); });
+  const branchPicker = (j.adhoc && !j.branchCode) ? `<div class="card"><div class="label">เลือกสาขาที่จะไป</div>
+    <select class="txt" onchange="setAdhocBranch(this.value)">
+     <option value="">— เลือกสาขา —</option>
+     ${Object.keys(byProv).sort().map(p=>`<optgroup label="จ.${esc(p)}">${byProv[p].map(b=>`<option value="${esc(b.code)}">${esc(b.name)}</option>`).join("")}</optgroup>`).join("")}
+    </select></div>` : '';
+
+  const branchCard = j.adhoc
+    ? (j.branchCode ? `<div class="card"><div class="label">สาขาที่จะไป</div>
+        <div class="val" style="font-size:14px">${esc(j.branch)}${j.prov?(' · จ.'+esc(j.prov)):''}</div>
+        <div class="hint" style="margin-top:6px;cursor:pointer;color:var(--brand);font-weight:700" onclick="resetAdhocBranch()">เปลี่ยนสาขา</div></div>` : '')
+    : `<div class="card"><div class="label">สาขาที่ต้องไป (จากแผนงาน)</div><div class="val" style="font-size:14px">${esc(j.branch)}</div>
+       ${j.start?`<div class="hint" style="margin:4px 0 0">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.adv?` · ควรเข้าก่อน ${j.adv} วัน`:''}</div>`:''}</div>`;
+
+  let list = effProv ? HOTELS.filter(h=>h.prov===effProv) : [];
+  if(j.blat!=null){
+    list = list.map(h=>Object.assign({}, h, { _km:haversine(j.blat,j.blng,h.lat,h.lng) }))
+               .sort((a,b)=>(a._km==null?9999:a._km)-(b._km==null?9999:b._km));
+  } else {
+    list = list.slice().sort((a,b)=>(a.price==null?9999:a.price)-(b.price==null?9999:b.price));
+  }
+  const hotelHtml=list.map(h=>{
+    const sel=S.hotelPicks.some(x=>x.code===h.code);
+    const dist = h._km!=null ? `ห่าง ${h._km.toFixed(1)} กม.` : (h.near?('ใกล้ '+esc(h.near)):'');
+    return `<div class="hotel ${sel?'sel':''}" onclick="toggleHotel('${esc(h.code)}')">
+      <div class="chk">${sel?'✓':''}</div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${h.choowap?' · Choowap':''}</div></div>
+      <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
+  }).join("");
+
+  const customHtml=S.hotelPicks.filter(x=>x.custom).map(h=>`<div class="hotel sel">
+    <div class="chk">✓</div>
+    <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · `:''}ที่พักใหม่ (ไม่อยู่ในทะเบียน)</div></div>
+    <div class="p">${h.price}฿</div><span class="rmv" onclick="event.stopPropagation();removeHotelPick('${esc(h.code)}')">ลบ</span></div>`).join("");
+
+  const addForm = S.addingHotel ? `
+    <div class="card" style="margin-top:8px;padding:12px">
+      <div class="label">ชื่อที่พัก</div><input class="txt" placeholder="ชื่อที่พักใหม่" value="${esc((S.newHotelDraft||{}).n||'')}" oninput="setNewHotelField('n',this.value)"/>
+      <div class="label" style="margin-top:8px">ลิงก์ Google Maps</div><input class="txt" placeholder="วางลิงก์ https://maps.google.com/..." value="${esc((S.newHotelDraft||{}).map||'')}" oninput="setNewHotelField('map',this.value)"/>
+      <div class="label" style="margin-top:8px">ราคา/คืน (บาท)</div><input class="txt" type="number" placeholder="เช่น 550" value="${esc((S.newHotelDraft||{}).p||'')}" oninput="setNewHotelField('p',this.value)"/>
+      <button class="btn" style="margin-top:10px" onclick="confirmNewHotel()">เพิ่มที่พักนี้</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="toggleAddHotelForm()">ยกเลิก</button>
+    </div>` : (effProv? `<div class="addnew" onclick="toggleAddHotelForm()">+ เพิ่มที่พักใหม่ (ไม่มีในทะเบียน)</div>` : '');
+
+  const slotHtml=S.slots.map((s,i)=>{
+    const opts=staffOfTeam(s.team);
+    return `<div class="slot"><div class="sh"><span class="gt ${s.g}">${s.g==='f'?'หญิง':'ชาย'}</span> คนที่ ${s.idx+1}</div>
+     <div class="label" style="margin-bottom:3px">ทีม</div>
+     <select class="txt" onchange="setSlotTeam(${i},this.value)">
+      ${TEAMS.map(t=>`<option ${s.team===t?'selected':''}>${esc(t)}</option>`).join("")}</select>
+     <div class="label" style="margin:8px 0 3px">รหัสพนักงาน</div>
+     <select class="txt" onchange="setSlotCode(${i},this.value)">
+      <option value="">— เลือกรหัสพนักงาน —</option>
+      ${opts.map(o=>`<option value="${esc(o.code)}" ${s.code===o.code?'selected':''}>${esc(o.code)} — ${esc(o.name)} (${esc(o.nick)})</option>`).join("")}
+      <option value="__manual__" ${s.manual?'selected':''}>อื่นๆ (ไม่มีในทะเบียน — กรอกเอง)</option>
+     </select>
+     ${s.manual?`
+      <div class="label" style="margin:8px 0 3px">ชื่อจริง-นามสกุล</div>
+      <input class="txt" placeholder="ชื่อ-สกุล" value="${esc(s.name||'')}" oninput="setSlotManualField(${i},'name',this.value)"/>
+      <div class="label" style="margin:8px 0 3px">เบอร์โทร</div>
+      <input class="txt" placeholder="เบอร์โทร" value="${esc(s.phone||'')}" oninput="setSlotManualField(${i},'phone',this.value)"/>
+      <div class="res no">กรอกเอง — ไม่พบในทะเบียน</div>`
+     : (s.code? `<div class="res">✓ ${esc(s.name)} · ${esc(s.phone||'ไม่มีเบอร์ในทะเบียน')}</div>` : `<div class="res no">เลือกรหัสพนักงานด้านบน</div>`)}
+    </div>`;
+  }).join("");
+
+  const guests=collectGuests(), rooms=pair(guests), ppl=guests.length, empty=rooms.length*2-ppl;
+  let warns="";
+  if(ppl>0){
+    warns+=`<div class="warn g">🛏️ ระบบจัดห้องแยกหญิง/ชาย ห้องละ 2 คน อัตโนมัติ — ไม่ปนเพศเด็ดขาด</div>`;
+    if(empty>0) warns+=`<div class="warn a">⚠️ เตียงว่าง ${empty} — เพราะเศษคน (คนละเพศรวมห้องกันไม่ได้)</div>`;
+  }
+  const rc=rooms.map((r,i)=>{
+    const nm=r.p.map(p=>esc(p.name||('คนที่ '+(p.idx+1)))).join(", ");
+    const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
+    return `<div class="room ${r.g}"><div class="rh"><span>ห้อง ${i+1}</span><span>${r.g==='f'?'หญิง':'ชาย'}</span></div><div class="oc">${nm}</div>${e}</div>`;
+  }).join("");
+
+  const nights=daysBetween(S.checkin,S.checkout);
+  const avg=S.hotelPicks.length? Math.round(S.hotelPicks.reduce((a,h)=>a+(h.price||0),0)/S.hotelPicks.length):0;
+  const cost=avg*rooms.length*(nights||0);
+  const namesOk = S.slots.every(s=>s.name && String(s.name).trim());
+  const dateOk = S.checkin && S.checkout && new Date(S.checkout)>new Date(S.checkin);
+  const ready = !S.busy && S.hotelPicks.length>0 && dateOk && ppl>0 && namesOk && !!effProv && (!j.adhoc || j.branchCode);
+  const priceWarn = S.hotelPicks.some(h=>(h.price||0)>600)
+    ? `<div class="warn a">⚠️ มีที่พักราคาเกิน 600฿/ห้อง/คืน — ระบุเหตุผลในหมายเหตุด้วย</div>` : '';
+
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span>
+    <div style="flex:1"><h1>${S.editId?'แก้ไขคำขอ':(j.adhoc?'จองเพิ่ม':'ขอที่พัก')}</h1><span class="sub">${esc(j.branch||'เลือกสาขา')}</span></div></div>
+   <div class="body">
+    ${branchCard}${branchPicker}${provPicker}
+    <div class="card"><div class="label">วันเข้าพัก – วันออก (เลือกเอง)</div>
+     <div style="display:flex;gap:10px">
+      <input class="txt" type="date" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
+      <input class="txt" type="date" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
+     ${S.checkin&&S.checkout&&!dateOk?`<div class="errtext">วันออกต้องหลังวันเข้าพัก</div>`:''}
+     ${nights>0?`<div class="hint" style="margin:6px 0 0">${nights} คืน</div>`:''}</div>
+    ${effProv?`<div class="card"><div class="label">เลือกที่พัก — ใน จ.${esc(effProv)} ${j.blat!=null?'(เรียงตามระยะทางจากสาขา)':'(เรียงตามราคา)'} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
+     ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}</div>`:''}
+    <div class="card"><div class="label">จำนวนผู้เข้าพัก (แยกเพศก่อน)</div>
+     <div style="display:flex;gap:22px;align-items:center;margin-top:4px">
+      <div><div style="font-size:12px;color:var(--female);font-weight:700;margin-bottom:5px">หญิง</div>
+       <div class="stepper"><button onclick="chCount('f',-1)">−</button><span>${S.f}</span><button onclick="chCount('f',1)">＋</button></div></div>
+      <div><div style="font-size:12px;color:var(--male);font-weight:700;margin-bottom:5px">ชาย</div>
+       <div class="stepper"><button onclick="chCount('m',-1)">−</button><span>${S.m}</span><button onclick="chCount('m',1)">＋</button></div></div></div>
+     ${ppl>0?`<div class="label" style="margin:14px 0 6px">เลือกทีม → รหัสพนักงาน (ชื่อ/เบอร์ขึ้นเอง)</div>${slotHtml}`:''}</div>
+    ${ppl>0?`<div class="card"><div class="label">ผังห้อง (อัตโนมัติ)</div>${warns}${priceWarn}<div class="roomgrid">${rc}</div>
+      <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px">
+       <span style="color:var(--muted)">คน ${ppl} · ห้อง ${rooms.length}</span><strong>รวม ~${cost.toLocaleString()}฿</strong></div></div>`:''}
+    <div class="card"><div class="label">หมายเหตุ</div><textarea class="txt" placeholder="โน้ตถึงแอดมิน" oninput="S.note=this.value">${esc(S.note||'')}</textarea></div>
+    ${ppl>0&&!namesOk?`<div class="warn d">⚠️ ยังมีผู้เข้าพักที่ไม่มีชื่อ — เลือกรหัสพนักงานหรือกรอกชื่อให้ครบก่อนส่ง</div>`:''}
+    <button class="btn" ${ready?'':'disabled'} onclick="submitBooking()">${S.busy?'กำลังส่ง…':(S.editId?'ส่งคำขอที่แก้ไขแล้ว':'ส่งคำขอให้แอดมิน')}</button>
+    <div class="hint" style="text-align:center">แอดมินจะตรวจ → จองบนชูวับ → ส่งวอเชอร์กลับ</div></div></div>`;
+}
+
+async function submitBooking(){
+  if(S.busy) return;
+  const guests=collectGuests();
+  const payload = {
+    branch_code: S.job.branchCode,
+    work_schedule_id: S.job.adhoc ? null : S.job.id,
+    checkin_date: S.checkin,
+    checkout_date: S.checkout,
+    note: S.note||'',
+    guests: guests.map(g=>({
+      team_code: g.team, employee_code: g.code||null,
+      name: g.name, phone: g.phone||null, gender: g.g==='f' ? 'F' : 'M'
+    })),
+    hotel_choices: S.hotelPicks.map(h=>(
+      h.custom
+        ? { hotel_id:null, custom_name:h.name, custom_map_link:h.map||null, custom_price:h.price||null }
+        : { hotel_id: hotelIdByCode(h.code), custom_price:null }
+    ))
+  };
+  S.busy=true; rerender(renderForm);
+  try{
+    if(S.editId){
+      await apiSend('/bookings','PATCH', Object.assign({ booking_id:S.editId, action:'edit' }, payload));
+      toast('ส่งคำขอที่แก้ไขแล้ว ✓');
+    }else{
+      const r = await apiSend('/bookings','POST', Object.assign({ action:'create' }, payload));
+      if(r.warnings && r.warnings.length) toast('ส่งคำขอแล้ว — แต่มีคนจองซ้อนวัน: '+r.warnings[0]);
+      else toast('ส่งคำขอให้แอดมินแล้ว ✓');
+    }
+    await reloadBookings(false);
+    const target = S.editId || (BOOKINGS[0] && BOOKINGS[0].id);
+    S.busy=false;
+    if(target) renderStatus(target); else goHome();
+  }catch(e){
+    S.busy=false;
+    toast(e.message);
+    rerender(renderForm);
+  }
+}
+function hotelIdByCode(code){
+  const h = HOTELS.find(x=>x.code===code);
+  return h ? h.id : null;
+}
+
+/* ================= สถานะการจอง (พนักงาน) ================= */
+function renderStatus(id){
+  const b=findB(id);
+  if(!b){ toast('ไม่พบการจองนี้ (อาจถูกยกเลิกแล้ว)'); goHome(); return; }
+  const rejectBox = b.status==='ต้องแก้ไข' ? `<div class="card" style="border-color:var(--danger)">
+    <div class="label" style="color:var(--danger)">⚠️ แอดมินส่งกลับให้แก้ไข</div>
+    <div style="font-size:13.5px;font-weight:600;margin-bottom:10px">${esc(b.rejectReason||'กรุณาตรวจสอบข้อมูลอีกครั้ง')}</div>
+    <button class="btn" onclick="openFormEdit('${b.id}')">แก้ไขคำขอ</button></div>` : '';
+  const voucherBox = (b.status==='จองสำเร็จ' && b.voucher) ? `<div class="card"><div class="label">วอเชอร์เข้าพัก</div>
+    <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc(b.voucher.code||'—')}</span></div>
+    ${b.voucher.url?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(b.voucher.url)}" target="_blank" rel="noopener">เปิดวอเชอร์</a></span></div>`:''}</div>` : '';
+  const order=['ส่งคำขอ','ดำเนินการจอง','จองสำเร็จ'];
+  const labels={'ส่งคำขอ':'ส่งคำขอ','ดำเนินการจอง':'ดำเนินการจอง','จองสำเร็จ':'จองเสร็จแล้ว'};
+  const curIdx=(b.status==='ต้องแก้ไข'||b.status==='ติดปัญหา')?-1:order.indexOf(b.status);
+  const tl=order.map((t,i)=>`<li class="${i<curIdx?'done':(i===curIdx?'now':'dim')}"><div class="dot"></div><div><div class="tt">${labels[t]}</div></div></li>`).join("");
+  const canChange=b.status!=='ส่งคำขอ' && b.status!=='ต้องแก้ไข';
+  const chips = canChange ? `<div class="chips">
+      <div class="chip" onclick="renderChange('ลดจำนวนห้อง','${b.id}')">🛏️ ขอลดห้อง</div>
+      <div class="chip" onclick="renderChange('ลดจำนวนคืน','${b.id}')">📅 ขอลดคืน</div>
+      <div class="chip" onclick="renderChange('ขอย้ายที่พัก','${b.id}')">🔁 ขอย้ายที่พัก</div>
+      <div class="chip" onclick="renderChange('ยกเลิกการจอง','${b.id}')">✖️ ขอยกเลิก</div></div>`
+    : `<div class="hint">รอแอดมินเริ่มดำเนินการจองก่อน ถึงจะขอเปลี่ยนแปลงได้</div>`;
+  const d=b.derived||{};
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span><h1>สถานะการจอง</h1></div>
+   <div class="body">
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center">
+      <div><div class="val" style="font-size:14px">${esc(b.branch)}</div>
+       <div class="hint" style="margin:2px 0 0">${fmtDate(b.checkin)}–${fmtDate(b.checkout)} · ${d.people||0} คน · ${d.rooms||0} ห้อง</div></div>
+      ${pillOf(b)}</div>
+      <div class="hint" style="margin:8px 0 0">เลขที่คำขอ ${esc(b.id)}</div></div>
+    ${rejectBox}
+    <div class="card"><ul class="timeline">${tl}</ul></div>
+    ${voucherBox}
+    ${b.change?`<div class="card"><div class="label">เรื่องที่แจ้งไปแล้ว รอแอดมินรับเรื่อง</div>
+      <div style="font-size:13px;font-weight:600">${esc(b.change.type)}${b.change.note?' — '+esc(b.change.note):''}</div></div>`:''}
+    <div class="card"><div class="label">มีเรื่องแจ้ง?</div>${chips}</div></div></div>`;
+}
+
+function renderChange(kind,id){
+  const b=findB(id); if(!b) return;
+  CH={ kind, _id:id, rooms:(b.derived&&b.derived.rooms)||1, checkin:b.checkin, checkout:b.checkout, note:'', busy:false };
+  drawChange();
+}
+function chgRooms(d){ CH.rooms=Math.max(1,CH.rooms+d); rerender(drawChange); }
+function drawChange(){
+  const kind=CH.kind, id=CH._id;
+  let body="";
+  if(kind==='ลดจำนวนห้อง'){
+    body=`<div class="hint">จำนวนห้องใหม่</div><div class="stepper"><button onclick="chgRooms(-1)">−</button><span>${CH.rooms}</span><button onclick="chgRooms(1)">＋</button></div>`;
+  } else if(kind==='ลดจำนวนคืน'){
+    body=`<div class="label">วันเช็คอินใหม่</div><input class="txt" type="date" value="${esc(CH.checkin)}" onchange="CH.checkin=this.value"/>
+      <div class="label" style="margin-top:10px">วันเช็คเอาท์ใหม่</div><input class="txt" type="date" value="${esc(CH.checkout)}" onchange="CH.checkout=this.value"/>`;
+  } else if(kind==='ขอย้ายที่พัก'){
+    body=`<div class="label">เหตุผล</div><textarea class="txt" placeholder="เช่น ห้องมีกลิ่น / แอร์เสีย" oninput="CH.note=this.value">${esc(CH.note||'')}</textarea>`;
+  } else {
+    body=`<div class="label">เหตุผลการยกเลิก</div><textarea class="txt" placeholder="เช่น งานยกเลิก" oninput="CH.note=this.value">${esc(CH.note||'')}</textarea>`;
+  }
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderStatus('${id}')">‹</span><h1>${esc(kind)}</h1></div>
+   <div class="body"><div class="card"><div class="label">รายละเอียด</div>${body}</div>
+    <button class="btn" ${CH.busy?'disabled':''} onclick="applyChange()">${CH.busy?'กำลังส่ง…':'ส่งเรื่องถึงแอดมิน'}</button></div></div>`;
+}
+async function applyChange(){
+  if(CH.busy) return;
+  CH.busy=true; rerender(drawChange);
+  try{
+    await apiSend('/bookings','POST',{
+      action:'request_change', booking_id:CH._id, type:CH.kind,
+      new_rooms: CH.kind==='ลดจำนวนห้อง'?CH.rooms:null,
+      new_checkin: CH.kind==='ลดจำนวนคืน'?CH.checkin:null,
+      new_checkout: CH.kind==='ลดจำนวนคืน'?CH.checkout:null,
+      note: CH.note||''
+    });
+    toast(`ส่งเรื่อง "${CH.kind}" ถึงแอดมินแล้ว ✓`);
+    await reloadBookings(false);
+    CH.busy=false;
+    renderStatus(CH._id);
+  }catch(e){ CH.busy=false; toast(e.message); rerender(drawChange); }
+}
+
+/* ================= แอดมิน ================= */
+function renderAdminQueue(){
+  const order={'ส่งคำขอ':0,'ดำเนินการจอง':1,'ติดปัญหา':2,'ต้องแก้ไข':3,'จองสำเร็จ':4};
+  const sorted=BOOKINGS.slice().sort((a,b)=>{
+    if(a.change && !b.change) return -1;
+    if(!a.change && b.change) return 1;
+    return (order[a.status]??9)-(order[b.status]??9);
+  });
+  const rows=sorted.map(b=>{
+    const src=b.src==='AREA'?`<span class="pill area">AREA</span>`:`<span class="pill ok">SMA</span>`;
+    const adhoc=b.adhoc?`<span class="pill wait">จองเพิ่ม</span>`:'';
+    const d=b.derived||{};
+    return `<div class="job" onclick="renderAdminDetail('${b.id}')">
+     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
+     <div class="g"><div class="t">${esc(b.branch)}</div>
+      <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
+      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
+  }).join("");
+  const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ').length;
+  const flagged=BOOKINGS.filter(b=>b.change).length;
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
+   <div class="body">
+    <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
+     <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
+     <div><div class="val" style="color:var(--danger)">${flagged}</div><div class="label" style="margin:0">มีเรื่องแจ้ง</div></div>
+     <div><div class="val" style="color:var(--success)">${BOOKINGS.filter(b=>b.status==='จองสำเร็จ').length}</div><div class="label" style="margin:0">จองเสร็จ</div></div>
+    </div></div>
+    <div class="hint">ตรวจผังห้อง + ก็อปรหัส/ชื่อ/เบอร์ไปจองบนชูวับ</div>
+    ${rows||'<div class="hint">ยังไม่มีคำขอเข้ามา</div>'}</div></div>`;
+}
+
+async function adminAction(bookingId, action, extra, okMsg, after){
+  try{
+    const r = await apiSend('/bookings','PATCH', Object.assign({ booking_id:bookingId, action }, extra||{}));
+    if(okMsg) toast(okMsg);
+    await reloadBookings(false);
+    if(after) after(r); else rerender(()=>renderAdminDetail(bookingId));
+  }catch(e){ toast(e.message); }
+}
+function chooseHotel(id,choiceId){ adminAction(id,'choose_hotel',{ choice_id:choiceId },null); }
+function startProcessing(id){ adminAction(id,'start_processing',null,'เริ่มดำเนินการจองแล้ว'); }
+function markProblem(id){ adminAction(id,'mark_problem',null,'บันทึกว่าติดปัญหา — แจ้งพนักงานหาที่ใหม่'); }
+function acceptChange(id,changeId){ adminAction(id,'accept_change',{ change_id:changeId },'รับเรื่องแล้ว — ปรับการจองเรียบร้อย'); }
+function dismissChange(id,changeId){ adminAction(id,'dismiss_change',{ change_id:changeId },'เก็บการจองไว้ตามเดิม'); }
+function deleteBooking(id){ adminAction(id,'cancel_booking',null,'ยกเลิกการจองนี้แล้ว ✓',()=>{ setTimeout(renderAdminQueue,400); }); }
+
+function renderReject(id){
+  REJ={ id, reason:'', busy:false };
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminDetail('${id}')">‹</span><h1>ส่งกลับให้แก้ไข</h1></div>
+   <div class="body"><div class="card"><div class="label">เหตุผลที่ส่งกลับให้พนักงานแก้ไข</div>
+    <textarea class="txt" placeholder="เช่น ข้อมูลผู้เข้าพักไม่ครบ / เลือกที่พักผิดจังหวัด" oninput="REJ.reason=this.value">${esc(REJ.reason||'')}</textarea></div>
+    <button class="btn danger" onclick="confirmReject()">ส่งกลับให้พนักงาน</button></div></div>`;
+}
+async function confirmReject(){
+  if(!REJ.reason||!REJ.reason.trim()){ toast('กรอกเหตุผลก่อน'); return; }
+  try{
+    await apiSend('/bookings','PATCH',{ booking_id:REJ.id, action:'reject', reason:REJ.reason });
+    toast('ส่งกลับให้พนักงานแก้ไขแล้ว');
+    await reloadBookings(false);
+    setTimeout(renderAdminQueue,400);
+  }catch(e){ toast(e.message); }
+}
+
+function renderAdminDetail(id){
+  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); renderAdminQueue(); return; }
+  const guests=bookingGuestList(id);
+  const rooms=pair(guests);
+  const nights=daysBetween(b.checkin,b.checkout)||1;
+  const chosen=b.hotels.find(h=>h.id===b.chosenChoiceId)||null;
+  const cost=chosen?(chosen.price||0)*rooms.length*nights:0;
+  const rc=rooms.map((r,k)=>{
+    const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
+    const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
+    return `<div class="room ${r.g}"><div class="rh"><span>ห้อง ${k+1}</span><span>${r.g==='f'?'หญิง':'ชาย'}</span></div><div class="oc">${nm}</div>${e}</div>`;
+  }).join("");
+  const guestRows=guests.map(g=>`<div class="guestcard">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="gt ${g.g}">${g.g==='f'?'ญ':'ช'}</span><strong style="font-size:12px">${esc(g.team||'')}</strong></div>
+    <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.code||'')}')">คัดลอก</span></div>
+    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.name||'')}')">คัดลอก</span></div>
+    <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.phone||'')}')">คัดลอก</span></div>
+   </div>`).join("");
+  const hotelRadios=b.hotels.map(h=>`<div class="hotel radio ${b.chosenChoiceId===h.id?'sel':''}" onclick="chooseHotel('${b.id}','${h.id}')">
+    <div class="chk">${b.chosenChoiceId===h.id?'✓':''}</div>
+    <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h.custom?(h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · ที่พักใหม่`:'ที่พักใหม่'):esc(h.near||'-')}</div></div>
+    <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`).join("");
+  const changeBox = !b.change ? '' : (b.change.type==='ยกเลิกการจอง'
+    ? `<div class="card" style="border-color:var(--danger)"><div class="label" style="color:var(--danger)">⚠️ พนักงานขอยกเลิกการจองนี้</div>
+        <div style="font-size:13.5px;font-weight:600;margin-bottom:6px">${b.change.note?('เหตุผล: '+esc(b.change.note)):'ไม่ระบุเหตุผล'}</div>
+        <button class="btn danger" onclick="deleteBooking('${b.id}')">ยืนยันยกเลิก — ลบการจองนี้</button>
+        <button class="btn ghost" style="margin-top:8px" onclick="dismissChange('${b.id}','${b.change.id}')">ไม่ยกเลิก — เก็บไว้</button></div>`
+    : `<div class="card" style="border-color:var(--danger)"><div class="label" style="color:var(--danger)">⚠️ เรื่องแจ้งจากพนักงาน</div>
+        <div style="font-size:13.5px;font-weight:600">${esc(b.change.type)}${b.change.rooms?': '+b.change.rooms+' ห้อง':''}${b.change.newCheckin?': '+fmtDate(b.change.newCheckin)+' – '+fmtDate(b.change.newCheckout):''}${b.change.note?' — '+esc(b.change.note):''}</div>
+        <button class="btn ghost" style="margin-top:10px" onclick="acceptChange('${b.id}','${b.change.id}')">รับเรื่อง & ปรับ</button>
+        <button class="btn ghost" style="margin-top:8px" onclick="dismissChange('${b.id}','${b.change.id}')">ไม่ปรับ — ปิดเรื่อง</button></div>`);
+  const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
+  const voucherShown = b.status==='จองสำเร็จ' ? `<div class="card"><div class="label">วอเชอร์ที่ส่งแล้ว</div>
+     <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc((b.voucher&&b.voucher.code)||'—')}</span></div>
+     ${(b.voucher&&b.voucher.url)?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(b.voucher.url)}" target="_blank" rel="noopener">เปิด</a></span></div>`:''}</div>` : '';
+  const actions = b.status==='ส่งคำขอ'
+    ? `<button class="btn" onclick="startProcessing('${b.id}')">เริ่มดำเนินการจอง</button>
+       <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
+    : (b.status==='จองสำเร็จ'
+      ? `<button class="btn ghost" onclick="renderVoucher('${b.id}')">แก้ไขวอเชอร์</button>`
+      : `<button class="btn" onclick="renderVoucher('${b.id}')">จองเสร็จแล้ว — แนบวอเชอร์</button>
+         <button class="btn ghost" style="margin-top:8px" onclick="markProblem('${b.id}')">จองไม่ได้ — ติดปัญหา</button>
+         <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`);
+  const copyAll = guests.map(g=>`${g.code||'-'} ${g.name}`).join('\n');
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+    <div style="flex:1"><h1>ตรวจก่อนจอง</h1><span class="sub">${esc(b.team)} · ${esc(b.branch)}</span></div></div>
+   <div class="body">
+    <div class="card"><div class="label">สรุปคำขอ${b.adhoc?' · <span class="pill wait">จองเพิ่ม (นอกแผนงาน)</span>':''}</div>
+     <div class="copyrow"><span class="k">เลขที่</span><span class="v">${esc(b.id)}</span></div>
+     <div class="copyrow"><span class="k">ทีม</span><span class="v">${esc(b.team)}</span></div>
+     <div class="copyrow"><span class="k">สาขา</span><span class="v">${esc(b.branch)}${b.prov?' · จ.'+esc(b.prov):''}</span></div>
+     <div class="copyrow"><span class="k">เช็คอิน–เอาท์</span><span class="v">${fmtDate(b.checkin)} – ${fmtDate(b.checkout)} (${nights} คืน)</span>
+      <span class="cp" onclick="copyTxt('${esc(b.checkin)} - ${esc(b.checkout)}')">คัดลอก</span></div>
+     <div class="copyrow"><span class="k">ห้อง</span><span class="v">${rooms.length} ห้อง</span></div>
+     <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
+     ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
+    ${rejectBanner}${changeBox}
+    <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
+     <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
+     <div class="roomgrid">${rc}</div></div>
+    <div class="card"><div class="label">รหัส · ชื่อ · เบอร์ (ก็อปไปจองบนชูวับ)</div>
+     ${guestRows}
+     <div class="addnew" onclick="copyTxt(${JSON.stringify(copyAll)})">คัดลอกรายชื่อทั้งหมด</div></div>
+    <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้ — เลือกอันที่จองได้จริง</div>${hotelRadios}
+     ${chosen?`<div class="hint" style="margin-top:8px">ประมาณการรวม ~${cost.toLocaleString()}฿ (${nights} คืน × ${rooms.length} ห้อง)</div>`:'<div class="hint">ยังไม่ได้เลือกที่พักที่จะจอง</div>'}</div>
+    ${voucherShown}
+    ${actions}</div></div>`;
+}
+
+function copyTxt(t){
+  if(!t){ toast('ไม่มีข้อมูลให้คัดลอก'); return; }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(()=>toast('คัดลอกแล้ว: '+String(t).slice(0,40))).catch(()=>toast('คัดลอกไม่ได้ — กดค้างเพื่อเลือกข้อความ'));
+  } else {
+    // Older in-app browsers block the clipboard API; fall back to a temporary textarea.
+    const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); toast('คัดลอกแล้ว'); }catch(e){ toast('คัดลอกไม่ได้'); }
+    document.body.removeChild(ta);
+  }
+}
+
+function renderVoucher(id){
+  const b=findB(id)||{};
+  VOUCH={ code:(b.voucher&&b.voucher.code)||'', url:(b.voucher&&b.voucher.url)||'', busy:false };
+  drawVoucher(id);
+}
+function drawVoucher(id){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminDetail('${id}')">‹</span><h1>แนบวอเชอร์</h1></div>
+   <div class="body">
+    <div class="card"><div class="label">เลขยืนยันจากชูวับ (จำเป็น)</div>
+     <input class="txt" placeholder="เช่น CHW-889201" value="${esc(VOUCH.code)}" oninput="VOUCH.code=this.value"/></div>
+    <div class="card"><div class="label">ลิงก์ไฟล์วอเชอร์ (จำเป็น)</div>
+     <input class="txt" placeholder="วางลิงก์ไฟล์วอเชอร์ (Google Drive / OneDrive)" value="${esc(VOUCH.url)}" oninput="VOUCH.url=this.value"/>
+     <div class="hint" style="margin:8px 0 0">อัปโหลดไฟล์ไว้ที่ไดรฟ์ แล้ววางลิงก์ที่แชร์ได้ตรงนี้ — พนักงานจะกดเปิดได้จากหน้าสถานะ</div></div>
+    <button class="btn" ${VOUCH.busy?'disabled':''} onclick="confirmVoucher('${id}')">${VOUCH.busy?'กำลังส่ง…':'ส่งวอเชอร์ให้พนักงาน'}</button></div></div>`;
+}
+async function confirmVoucher(id){
+  if(VOUCH.busy) return;
+  if(!VOUCH.code||!VOUCH.code.trim()){ toast('กรอกเลขยืนยันจากชูวับก่อน'); return; }
+  if(!VOUCH.url||!VOUCH.url.trim()){ toast('วางลิงก์ไฟล์วอเชอร์ก่อน'); return; }
+  VOUCH.busy=true; rerender(()=>drawVoucher(id));
+  try{
+    await apiSend('/bookings','PATCH',{ booking_id:id, action:'attach_voucher', confirmation_no:VOUCH.code, voucher_file_url:VOUCH.url });
+    toast('บันทึกวอเชอร์แล้ว ✓ พนักงานเห็นได้ทันที');
+    await reloadBookings(false);
+    VOUCH.busy=false;
+    setTimeout(renderAdminQueue,400);
+  }catch(e){ VOUCH.busy=false; toast(e.message); rerender(()=>drawVoucher(id)); }
+}
+
+/* ---------------- boot ---------------- */
+renderLogin();
+</script>
+</body>
+</html>
