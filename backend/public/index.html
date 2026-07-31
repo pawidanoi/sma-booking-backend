@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>ระบบจองที่พัก SMA</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
   :root{--ink:#2b1b12;--muted:#8c7256;--line:#f0dfba;--paper:#fff8ea;--surface:#fff;
     --brand:#e0272a;--brand2:#b01f22;--brand-soft:#fbe6e3;
@@ -277,22 +278,46 @@ async function doLogin(){
   const btn=$("#loginBtn"); if(btn){ btn.disabled=true; btn.textContent='กำลังตรวจสอบ…'; }
   try{
     const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
-    ME = d.me;
-    IS_ADMIN = ME.position==='แอดมิน';
-    BRANCHES = d.branches||[];
-    HOTELS = (d.hotels||[]).map(normHotel);
-    TEAMS = (d.teams||[]).map(t=>t.code);
-    STAFF_LIST = d.staff||[];
-    SCHEDULE = d.schedule||[];
-    STAFF={}; STAFF_LIST.forEach(s=>{ STAFF[s.code]=s; });
-    BRANCH_BY_CODE={}; BRANCHES.forEach(b=>{ BRANCH_BY_CODE[b.code]=b; });
-    PROVINCES=[...new Set(HOTELS.filter(h=>h.prov).map(h=>h.prov))].sort();
-    if(d.constants && d.constants.mission_types) MISSION_TYPES = d.constants.mission_types;
-    updateRolebar();
-    await reloadBookings(false);
-    goHome();
+    await applyBootstrap(d);
   }catch(e){
     renderLogin(e.message);
+  }
+}
+
+async function applyBootstrap(d){
+  ME = d.me;
+  IS_ADMIN = ME.position==='แอดมิน';
+  BRANCHES = d.branches||[];
+  HOTELS = (d.hotels||[]).map(normHotel);
+  TEAMS = (d.teams||[]).map(t=>t.code);
+  STAFF_LIST = d.staff||[];
+  SCHEDULE = d.schedule||[];
+  STAFF={}; STAFF_LIST.forEach(s=>{ STAFF[s.code]=s; });
+  BRANCH_BY_CODE={}; BRANCHES.forEach(b=>{ BRANCH_BY_CODE[b.code]=b; });
+  PROVINCES=[...new Set(HOTELS.filter(h=>h.prov).map(h=>h.prov))].sort();
+  if(d.constants && d.constants.mission_types) MISSION_TYPES = d.constants.mission_types;
+  updateRolebar();
+  await reloadBookings(false);
+  goHome();
+}
+
+// Opened inside LINE via the /home LIFF link — if this LINE account was already
+// linked to an employee (by chatting "ผูกบัญชี" with มะม่วง), skip manual code
+// entry entirely. Falls straight through to the normal login form otherwise,
+// including when opened in a plain browser (no liff global, or not in a LIFF client).
+async function tryLiffAutoLogin(){
+  if (typeof liff === 'undefined') { renderLogin(); return; }
+  try{
+    const cfgRes = await fetch('/api/liff-config');
+    const cfg = await cfgRes.json();
+    if (!cfgRes.ok) throw new Error(cfg.error);
+    await liff.init({ liffId: cfg.liffId });
+    if (!liff.isInClient()) { renderLogin(); return; }
+    const profile = await liff.getProfile();
+    const d = await apiGet('/bootstrap?line_user_id='+encodeURIComponent(profile.userId));
+    await applyBootstrap(d);
+  }catch(e){
+    renderLogin();
   }
 }
 
@@ -1150,7 +1175,7 @@ async function advanceClaim(id,action){
 }
 
 /* ---------------- boot ---------------- */
-renderLogin();
+tryLiffAutoLogin();
 </script>
 </body>
 </html>

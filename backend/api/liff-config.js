@@ -1,8 +1,8 @@
 const { json, fail } = require('../lib/http');
 
-// The /link-account page needs the raw LIFF ID to call liff.init() client-side.
-// LIFF_URL (e.g. https://liff.line.me/1234567890-abcdefgh) already contains it —
-// no separate secret needed, just parse the last path segment.
+// index.html calls this to get the raw LIFF ID for liff.init() when it might be
+// opened inside LINE (LIFF_URL, e.g. https://liff.line.me/1234567890-abcdefgh,
+// already contains it — no separate secret needed).
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return fail(res, 405, 'method not allowed');
 

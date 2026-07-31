@@ -1,6 +1,7 @@
 const { supabase } = require('../lib/supabase');
 const { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink } = require('../lib/line');
 const { startBookingFlow, handleFlowPostback, handleFlowMessage } = require('../lib/line-booking-flow');
+const { linkEmployeeByCode } = require('../lib/link-employee');
 
 // Raw body is required to verify the LINE signature — must read the stream
 // ourselves instead of letting the platform auto-parse JSON.
@@ -66,8 +67,7 @@ async function onFollow(event) {
   await reply(event.replyToken, [
     {
       type: 'text',
-      text: 'สวัสดีค่า~ มะม่วงเองนะคะ 🥭 ผู้ช่วยจองที่พักประจำทีมภาคสนาม ตั้งแต่วันนี้เป็นต้นไปมะม่วงจะคอยเตือนไม่ให้ลืมจองเลยนะ!\nก่อนเริ่มใช้งาน กดผูกบัญชีด้วยรหัสพนักงานครั้งเดียวก่อนน้า จะได้จำคุณได้ทุกครั้ง',
-      quickReply: { items: [qrUri('🔗 ผูกบัญชี', liffLink('/link-account'))] }
+      text: 'สวัสดีค่า~ มะม่วงเองนะคะ 🥭 ผู้ช่วยจองที่พักประจำทีมภาคสนาม ตั้งแต่วันนี้เป็นต้นไปมะม่วงจะคอยเตือนไม่ให้ลืมจองเลยนะ!\nก่อนเริ่มใช้งาน พิมพ์รหัสพนักงานของคุณมาเลยค่ะ (เช่น CMT2400114) ผูกครั้งเดียว จำได้ทุกครั้งที่แชทกันเลย'
     }
   ]);
 }
@@ -80,7 +80,7 @@ async function onPostback(event) {
   const employee = await findEmployeeByLineId(userId);
   if (!employee && action !== 'menu') {
     await reply(event.replyToken, [
-      { type: 'text', text: 'เอ๊ะ ยังไม่รู้จักกันเลยนะคะ กดผูกบัญชีก่อนน้า มะม่วงจะได้จำได้ 🥭', quickReply: { items: [qrUri('🔗 ผูกบัญชี', liffLink('/link-account'))] } }
+      { type: 'text', text: 'เอ๊ะ ยังไม่รู้จักกันเลยนะคะ พิมพ์รหัสพนักงานของคุณมาก่อนน้า มะม่วงจะได้จำได้ 🥭' }
     ]);
     return;
   }
@@ -177,15 +177,30 @@ async function onPostback(event) {
 async function onMessage(event) {
   if (event.message.type !== 'text') return;
 
+  const employee = await findEmployeeByLineId(event.source.userId);
+
+  // A third bounded exception to "no free text": the employee code, but only
+  // while this LINE account isn't linked to anyone yet — chat-only linking
+  // avoids needing the LIFF/LINE Login channel published just to bootstrap.
+  if (!employee) {
+    const result = await linkEmployeeByCode(event.message.text, event.source.userId);
+    if (result.ok) {
+      await reply(event.replyToken, [
+        { type: 'text', text: `ผูกบัญชีสำเร็จแล้วค่ะ คุณ${result.employee.nickname || result.employee.name} 🥭 จำได้แล้วนะ มีอะไรให้ช่วยจองวันนี้ไหมคะ` },
+        mainMenuFlex()
+      ]);
+    } else {
+      await reply(event.replyToken, [{ type: 'text', text: result.error }]);
+    }
+    return;
+  }
+
   // Two bounded exceptions to the "no free text" rule while a booking conversation
   // is active: a guest's name (when not in the team roster) and the "อื่นๆ" mission
   // note — the same two exceptions the LIFF web form itself allows. Everything else,
   // including every date, still goes through buttons/native pickers only.
-  const employee = await findEmployeeByLineId(event.source.userId);
-  if (employee) {
-    const handled = await handleFlowMessage(event, employee);
-    if (handled) return;
-  }
+  const handled = await handleFlowMessage(event, employee);
+  if (handled) return;
 
   // Enforced boundary: มะม่วงไม่รับพิมพ์อิสระ ไม่พยายามตีความข้อความ ส่งกลับไปที่เมนูเสมอ
   await reply(event.replyToken, [
