@@ -42,7 +42,7 @@ function push(to, messages) {
 function mainMenuQuickReply() {
   return {
     type: 'text',
-    text: 'มะม่วงช่วยอะไรได้บ้างคะ เลือกจากเมนูด้านล่างได้เลย 🥭',
+    text: 'เอาล่ะ มะม่วงช่วยอะไรได้บ้างนะ~ เลือกจากเมนูด้านล่างได้เลยค่ะ 🥭',
     quickReply: {
       items: [
         qrPostback('📋 งานที่ต้องจอง', 'action=jobs'),
@@ -52,6 +52,49 @@ function mainMenuQuickReply() {
         qrPostback('❓ คำถามที่พบบ่อย', 'action=faq_menu'),
         qrPostback('🙋 คุยกับแอดมิน', 'action=escalate')
       ]
+    }
+  };
+}
+
+// Same 6 options as mainMenuQuickReply(), as a Flex Message card instead of a plain
+// text bubble — the "modern style" visual upgrade. Every tap is still a postback,
+// so this changes nothing about the no-free-text rule, just how it looks.
+const BRAND = { red: '#e0272a', gold: '#ffc72c', ink: '#2b1b12', paper: '#fff8ea' };
+function menuButton(label, data, style) {
+  return {
+    type: 'button',
+    action: { type: 'postback', label, data, displayText: label },
+    style: style || 'secondary',
+    color: style === 'primary' ? BRAND.red : undefined,
+    height: 'sm'
+  };
+}
+function mainMenuFlex() {
+  return {
+    type: 'flex',
+    altText: 'เมนูของมะม่วง 🥭 เลือกได้เลยค่ะ',
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'horizontal', backgroundColor: BRAND.red, paddingAll: '14px',
+        contents: [
+          { type: 'text', text: '🥭 น้องมะม่วง', color: '#ffffff', weight: 'bold', size: 'md' }
+        ]
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', backgroundColor: BRAND.paper,
+        contents: [
+          { type: 'text', text: 'วันนี้ให้มะม่วงช่วยอะไรดีคะ~', color: BRAND.ink, size: 'sm', margin: 'none', wrap: true },
+          { type: 'box', layout: 'vertical', spacing: 'sm', margin: 'md', contents: [
+            menuButton('📋 งานที่ต้องจอง', 'action=jobs', 'primary'),
+            menuButton('📦 ดูสถานะการจอง', 'action=status'),
+            menuButton('🎫 ดูวอเชอร์อีกครั้ง', 'action=voucher'),
+            menuButton('🔁 ขอเปลี่ยนแปลง', 'action=change_menu'),
+            menuButton('❓ คำถามที่พบบ่อย', 'action=faq_menu'),
+            menuButton('🙋 คุยกับแอดมิน', 'action=escalate')
+          ]}
+        ]
+      }
     }
   };
 }
@@ -68,4 +111,4 @@ function liffLink(path) {
   return `${LIFF_URL}${path || ''}`;
 }
 
-module.exports = { verifySignature, reply, push, mainMenuQuickReply, qrPostback, qrUri, liffLink };
+module.exports = { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink };

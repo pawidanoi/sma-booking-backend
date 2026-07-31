@@ -45,11 +45,15 @@ module.exports = async function handler(req, res) {
       .map((code) => lineIdByEmployee.get(code))
       .filter(Boolean);
 
-    const roundLabel = daysUntil === 5 ? 'แจ้งเตือนรอบแรก' : 'แจ้งเตือนซ้ำ';
     const branchName = row.branches?.name || row.branch_code;
+    // Round 2 gets a more insistent/naggy tone than round 1 — matches the confirmed
+    // "kind but a little naggy" personality: friendly nudge first, firmer follow-up.
+    const text = daysUntil === 5
+      ? `🔔 อีก ${daysUntil} วันถึงกำหนดงานที่ ${branchName} (ทีม ${row.team_code}) แล้วนะคะ ยังไม่เห็นคำขอที่พักจากทีมเลย จองเลยไหมคะ? 🥭`
+      : `🔔 เอ๊ะ นี่จะจองรึยังคะเนี่ย?! อีกแค่ ${daysUntil} วันจะถึงงานที่ ${branchName} (ทีม ${row.team_code}) แล้วนะ ยังไม่มีคำขอเข้ามาเลย มะม่วงเป็นห่วงนะ จองด่วนเลยค่ะ! 😤🥭`;
     const message = {
       type: 'text',
-      text: `🔔 ${roundLabel} — อีก ${daysUntil} วันถึงกำหนดงานที่ ${branchName} (ทีม ${row.team_code}) แล้วนะคะ ยังไม่เห็นคำขอที่พักเลย จองเลยไหมคะ? 🥭`,
+      text,
       // Matches the mascot spec's example exactly — a push message still supports
       // quickReply, so the reminder itself is one tap away from booking or dismissing.
       quickReply: {
