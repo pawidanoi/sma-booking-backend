@@ -47,7 +47,7 @@ module.exports = async function handler(req, res) {
       branch_code,
       date_start,
       date_end,
-      advance_days: [0, 1, 3].includes(advance_days) ? advance_days : 0,
+      advance_days: Number.isInteger(advance_days) && advance_days >= 0 && advance_days <= 14 ? advance_days : 0,
       source: 'sheet_sync'
     });
   }
