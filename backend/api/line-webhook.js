@@ -157,6 +157,12 @@ async function onPostback(event) {
       await escalateToAdmin(event, employee);
       return;
 
+    case 'dismiss_reminder':
+      await reply(event.replyToken, [
+        { type: 'text', text: 'ได้ค่า เดี๋ยวมะม่วงจะเตือนอีกทีนะคะ 🥭' }
+      ]);
+      return;
+
     default:
       await reply(event.replyToken, [mainMenuQuickReply()]);
   }
@@ -230,7 +236,20 @@ async function escalateToAdmin(event, employee) {
     .eq('team_code', 'HQ')
     .not('line_user_id', 'is', null);
 
-  const notifyText = `🙋 ${employee.nickname || employee.name} (${employee.team_code}) ขอคุยกับแอดมินผ่านมะม่วงค่ะ`;
+  // Attach the employee's most recent booking so the admin has context on what
+  // to follow up on, rather than a bare "someone wants to talk" ping.
+  const { data: latestBooking } = await supabase
+    .from('bookings')
+    .select('id, status, branch_code, branches(name)')
+    .eq('created_by_employee', employee.code)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const bookingContext = latestBooking
+    ? `\nคำขอล่าสุด: ${latestBooking.id} · ${latestBooking.branches?.name || latestBooking.branch_code} · ${latestBooking.status}`
+    : '';
+  const notifyText = `🙋 ${employee.nickname || employee.name} (${employee.team_code}) ขอคุยกับแอดมินผ่านมะม่วงค่ะ${bookingContext}`;
   await Promise.all(
     (admins || [])
       .filter((a) => a.line_user_id)

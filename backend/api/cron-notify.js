@@ -1,5 +1,5 @@
 const { supabase } = require('../lib/supabase');
-const { push } = require('../lib/line');
+const { push, qrPostback, qrUri, liffLink } = require('../lib/line');
 
 // Runs daily via Vercel Cron (see vercel.json — 02:00 UTC = 09:00 Thailand time).
 // For every work_schedule row without a booking yet, push a reminder to the
@@ -47,9 +47,21 @@ module.exports = async function handler(req, res) {
 
     const roundLabel = daysUntil === 5 ? 'แจ้งเตือนรอบแรก' : 'แจ้งเตือนซ้ำ';
     const branchName = row.branches?.name || row.branch_code;
-    const text = `🔔 ${roundLabel} — อีก ${daysUntil} วันถึงกำหนดงานที่ ${branchName} (ทีม ${row.team_code}) แล้วนะคะ ยังไม่เห็นคำขอที่พักเลย จองเลยไหมคะ? 🥭`;
+    const message = {
+      type: 'text',
+      text: `🔔 ${roundLabel} — อีก ${daysUntil} วันถึงกำหนดงานที่ ${branchName} (ทีม ${row.team_code}) แล้วนะคะ ยังไม่เห็นคำขอที่พักเลย จองเลยไหมคะ? 🥭`,
+      // Matches the mascot spec's example exactly — a push message still supports
+      // quickReply, so the reminder itself is one tap away from booking or dismissing.
+      quickReply: {
+        items: [
+          qrUri('จองเลย', liffLink('/home')),
+          qrUri('ดูรายละเอียดงาน', liffLink('/home')),
+          qrPostback('ยังไม่ต้องตอนนี้', 'action=dismiss_reminder')
+        ]
+      }
+    };
 
-    await Promise.all(recipients.map((lineId) => push(lineId, [{ type: 'text', text }])));
+    await Promise.all(recipients.map((lineId) => push(lineId, [message])));
     sent += recipients.length;
     results.push({ team: row.team_code, branch: branchName, daysUntil, recipients: recipients.length });
   }
