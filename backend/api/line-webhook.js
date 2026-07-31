@@ -1,5 +1,6 @@
 const { supabase } = require('../lib/supabase');
 const { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink } = require('../lib/line');
+const { startBookingFlow, handleFlowPostback, handleFlowMessage } = require('../lib/line-booking-flow');
 
 // Raw body is required to verify the LINE signature — must read the stream
 // ourselves instead of letting the platform auto-parse JSON.
@@ -84,15 +85,20 @@ async function onPostback(event) {
     return;
   }
 
+  // Multi-step booking conversation takes priority over the fixed menu actions
+  // below — a "flow=" postback only exists while a conversation is in progress.
+  if (params.get('flow')) {
+    const handled = await handleFlowPostback(event, employee, params);
+    if (handled) return;
+  }
+
   switch (action) {
     case 'menu':
       await reply(event.replyToken, [mainMenuFlex()]);
       return;
 
     case 'jobs':
-      await reply(event.replyToken, [
-        { type: 'text', text: 'ดูงานที่ต้องจองที่พักของทีมได้ที่นี่เลยค่ะ อย่าปล่อยไว้นานนะ~', quickReply: { items: [qrUri('📋 เปิดหน้างานที่ต้องจอง', liffLink('/home'))] } }
-      ]);
+      await startBookingFlow(event, employee);
       return;
 
     case 'status':
@@ -170,6 +176,17 @@ async function onPostback(event) {
 
 async function onMessage(event) {
   if (event.message.type !== 'text') return;
+
+  // Two bounded exceptions to the "no free text" rule while a booking conversation
+  // is active: a guest's name (when not in the team roster) and the "อื่นๆ" mission
+  // note — the same two exceptions the LIFF web form itself allows. Everything else,
+  // including every date, still goes through buttons/native pickers only.
+  const employee = await findEmployeeByLineId(event.source.userId);
+  if (employee) {
+    const handled = await handleFlowMessage(event, employee);
+    if (handled) return;
+  }
+
   // Enforced boundary: มะม่วงไม่รับพิมพ์อิสระ ไม่พยายามตีความข้อความ ส่งกลับไปที่เมนูเสมอ
   await reply(event.replyToken, [
     { type: 'text', text: 'แหม่~ พิมพ์มามะม่วงอ่านไม่ออกหรอกนะคะ 😅 กดเลือกจากเมนูด้านล่างเลยจ้า จะได้ไม่พลาดข้อมูลด้วย' },
