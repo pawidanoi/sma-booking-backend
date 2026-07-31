@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const { fail, json } = require('../lib/http');
 const { getActor, isAdmin: checkIsAdmin } = require('../lib/auth');
 
@@ -48,12 +46,15 @@ module.exports = async function handler(req, res) {
     if (!createRes.ok) return fail(res, 500, 'สร้าง rich menu ไม่สำเร็จ: ' + JSON.stringify(createBody));
     const richMenuId = createBody.richMenuId;
 
-    const imagePath = path.join(process.cwd(), 'public', 'richmenu.png');
-    const imageBytes = fs.readFileSync(imagePath);
+    // public/ files aren't in the serverless function's filesystem — they're served as
+    // static CDN assets separately, so fetch the image over HTTP from this same deployment.
+    const host = req.headers.host;
+    const imageRes = await fetch(`https://${host}/richmenu.png`);
+    const imageBuf = Buffer.from(await imageRes.arrayBuffer());
     const uploadRes = await fetch(`${BOT_DATA_API}/richmenu/${richMenuId}/content`, {
       method: 'POST',
       headers: { 'Content-Type': 'image/png', Authorization: `Bearer ${CHANNEL_TOKEN}` },
-      body: imageBytes
+      body: imageBuf
     });
     if (!uploadRes.ok) {
       const t = await uploadRes.text();
