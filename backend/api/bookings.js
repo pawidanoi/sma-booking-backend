@@ -1,36 +1,26 @@
 const { supabase } = require('../lib/supabase');
-const { json, fail, readBody, roomsFor, nightsBetween } = require('../lib/http');
+const { json, fail, readBody, roomsFor, nightsBetween, emptyBedsByGender } = require('../lib/http');
+const { getActor, isAdmin: checkIsAdmin } = require('../lib/auth');
 
-const ADMIN_POSITIONS = ['แอดมิน'];
-const SELF_SERVE_POSITIONS = [
-  'ผู้บริหาร',
-  'แอดมิน',
-  'Sales & Marketing Division Manager',
-  'หัวหน้าแผนกกิจกรรมร้านค้า'
-];
+const MISSION_TYPES = ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'];
 
 // bookings <-> booking_hotel_choices are joined BOTH ways (choices point at the booking,
 // and the booking points back at the one choice the admin picked), so the embed must name
 // the constraint explicitly or PostgREST refuses it as ambiguous.
+//
+// booking_join_requests -> bookings is single-direction (no column on bookings points back
+// at a join request), so no !fk hint is needed there — same safe shape as booking_guests.
 const BOOKING_SELECT = `
   id, team_code, branch_code, work_schedule_id, checkin_date, checkout_date, status,
-  reject_reason, chosen_hotel_choice_id, confirmation_no, voucher_file_url, note,
+  reject_reason, chosen_hotel_choice_id, confirmation_no, voucher_file_url, voucher_storage_path, note,
+  mission_type, mission_type_note,
   created_by_employee, created_at, updated_at,
   branches ( name, province, lat, lng ),
   booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
   booking_guests ( id, team_code, employee_code, name, phone, gender ),
-  booking_changes ( id, type, new_rooms, new_checkin, new_checkout, note, status, created_at )
+  booking_changes ( id, type, new_rooms, new_checkin, new_checkout, note, status, created_at ),
+  booking_join_requests ( id, requested_by_employee, guest_name, guest_gender, guest_phone, guest_employee_code, guest_team_code, status, decided_by_employee, decided_at, created_at )
 `;
-
-async function getActor(code) {
-  if (!code) return null;
-  const { data } = await supabase
-    .from('employees')
-    .select('code, name, nickname, team_code, position')
-    .eq('code', code)
-    .maybeSingle();
-  return data;
-}
 
 module.exports = async function handler(req, res) {
   const body = readBody(req);
@@ -38,7 +28,7 @@ module.exports = async function handler(req, res) {
   const actor = await getActor(actorCode);
   if (!actor) return fail(res, 401, 'ไม่พบรหัสพนักงานผู้ใช้งาน — เข้าสู่ระบบอีกครั้ง');
 
-  const isAdmin = ADMIN_POSITIONS.includes(actor.position);
+  const isAdmin = checkIsAdmin(actor);
 
   try {
     if (req.method === 'GET') return await listBookings(req, res, actor, isAdmin);
@@ -55,19 +45,48 @@ module.exports = async function handler(req, res) {
 
 async function listBookings(req, res, actor, isAdmin) {
   const scope = req.query.scope || 'mine';
+  const today = new Date().toISOString().slice(0, 10);
   let q = supabase.from('bookings').select(BOOKING_SELECT).order('created_at', { ascending: false });
 
   if (scope === 'admin') {
     if (!isAdmin) return fail(res, 403, 'เฉพาะแอดมินเท่านั้น');
+  } else if (scope === 'open_beds') {
+    // Anyone can browse rooms with a spare bed to request joining — not admin-gated.
+    q = q.in('status', ['ดำเนินการจอง', 'จองสำเร็จ']).gte('checkout_date', today);
   } else {
     // An employee sees what they submitted plus anything else their team submitted,
     // so a stand-in can pick up a booking the usual booker started.
     q = q.or(`created_by_employee.eq.${actor.code},team_code.eq.${actor.team_code}`);
   }
 
+  if (req.query.in_stay === '1') {
+    q = q.eq('status', 'จองสำเร็จ').lte('checkin_date', today).gte('checkout_date', today);
+  }
+
   const { data, error } = await q;
   if (error) return fail(res, 500, error.message);
-  json(res, 200, { bookings: (data || []).map(decorate) });
+  let rows = (data || []).map(decorate);
+
+  if (scope === 'open_beds' || req.query.empty_beds === '1') {
+    rows = rows.filter((b) => b.derived.empty_beds > 0);
+  }
+
+  if (scope === 'open_beds') {
+    // This scope crosses team boundaries (unlike scope=mine), so it never exposes
+    // other people's guest list/hotel/voucher details — just enough to decide whether
+    // to request a spot. Admins get the full shape via scope=admin&empty_beds=1 instead.
+    rows = rows.map((b) => ({
+      id: b.id,
+      branch_code: b.branch_code,
+      branches: b.branches,
+      team_code: b.team_code,
+      checkin_date: b.checkin_date,
+      checkout_date: b.checkout_date,
+      empty_beds: b.derived.empty_beds
+    }));
+  }
+
+  json(res, 200, { bookings: rows });
 }
 
 function decorate(b) {
@@ -97,6 +116,7 @@ async function handlePost(req, res, actor, isAdmin, body) {
   const action = body.action || 'create';
   if (action === 'create') return createBooking(req, res, actor, body);
   if (action === 'request_change') return requestChange(req, res, actor, body);
+  if (action === 'request_join') return requestJoin(req, res, actor, body);
   return fail(res, 400, `ไม่รู้จัก action: ${action}`);
 }
 
@@ -112,7 +132,7 @@ async function nextBookingId() {
 }
 
 async function createBooking(req, res, actor, body) {
-  const { branch_code, work_schedule_id, checkin_date, checkout_date, note, guests, hotel_choices } = body;
+  const { branch_code, work_schedule_id, checkin_date, checkout_date, note, guests, hotel_choices, mission_type, mission_type_note } = body;
 
   if (!branch_code) return fail(res, 400, 'ยังไม่ได้เลือกสาขา');
   if (!checkin_date || !checkout_date) return fail(res, 400, 'ยังไม่ได้เลือกวันเข้าพัก–วันออก');
@@ -125,6 +145,16 @@ async function createBooking(req, res, actor, body) {
     if (!g.name || !String(g.name).trim()) return fail(res, 400, 'ผู้เข้าพักบางคนยังไม่มีชื่อ');
     if (g.gender !== 'M' && g.gender !== 'F') return fail(res, 400, 'ผู้เข้าพักบางคนยังไม่ระบุเพศ');
   }
+
+  // Ad-hoc bookings (no work_schedule_id) must state what the trip is for; a
+  // scheduled-job booking's purpose is already implicit (regular team work).
+  if (!work_schedule_id) {
+    if (!MISSION_TYPES.includes(mission_type)) return fail(res, 400, 'ต้องระบุประเภทภารกิจสำหรับการจองแบบเฉพาะกิจ');
+    if (mission_type === 'อื่นๆ' && !String(mission_type_note || '').trim()) return fail(res, 400, 'กรุณาระบุรายละเอียดภารกิจ');
+  }
+
+  const { data: branchRow } = await supabase.from('branches').select('code').eq('code', branch_code).maybeSingle();
+  if (!branchRow) return fail(res, 400, 'ไม่พบรหัสสาขานี้ในทะเบียน');
 
   // Rule: warn when the same person is already booked on overlapping dates.
   const conflicts = await findGuestConflicts(guests, checkin_date, checkout_date);
@@ -139,6 +169,8 @@ async function createBooking(req, res, actor, body) {
     checkout_date,
     status: 'ส่งคำขอ',
     note: note || null,
+    mission_type: work_schedule_id ? null : mission_type,
+    mission_type_note: work_schedule_id ? null : (mission_type === 'อื่นๆ' ? (mission_type_note || null) : null),
     created_by_employee: actor.code
   });
   if (insErr) return fail(res, 500, insErr.message);
@@ -222,6 +254,27 @@ async function requestChange(req, res, actor, body) {
   json(res, 201, { ok: true });
 }
 
+async function requestJoin(req, res, actor, body) {
+  const { booking_id, guest } = body;
+  const { data: bk } = await supabase.from('bookings').select('id, status, checkout_date').eq('id', booking_id).maybeSingle();
+  if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
+  if (!guest || !guest.name || !String(guest.name).trim()) return fail(res, 400, 'ข้อมูลผู้เข้าพักไม่ครบ');
+  if (!guest || (guest.gender !== 'M' && guest.gender !== 'F')) return fail(res, 400, 'ข้อมูลผู้เข้าพักไม่ครบ');
+
+  const { error } = await supabase.from('booking_join_requests').insert({
+    booking_id,
+    requested_by_employee: actor.code,
+    guest_name: String(guest.name).trim(),
+    guest_gender: guest.gender,
+    guest_phone: guest.phone || null,
+    guest_employee_code: guest.employee_code || null,
+    guest_team_code: guest.team_code || actor.team_code,
+    status: 'pending'
+  });
+  if (error) return fail(res, 500, error.message);
+  json(res, 201, { ok: true });
+}
+
 // ---------------------------------------------------------------- admin actions
 
 async function handlePatch(req, res, actor, isAdmin, body) {
@@ -231,7 +284,7 @@ async function handlePatch(req, res, actor, isAdmin, body) {
   const { data: bk } = await supabase.from('bookings').select('id, status').eq('id', booking_id).maybeSingle();
   if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
 
-  const adminOnly = ['start_processing', 'choose_hotel', 'attach_voucher', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'cancel_booking'];
+  const adminOnly = ['start_processing', 'choose_hotel', 'attach_voucher', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'cancel_booking', 'add_guest_admin', 'accept_join_request', 'dismiss_join_request'];
   if (adminOnly.includes(action) && !isAdmin) return fail(res, 403, 'เฉพาะแอดมินเท่านั้น');
 
   const stamp = { updated_at: new Date().toISOString() };
@@ -251,12 +304,23 @@ async function handlePatch(req, res, actor, isAdmin, body) {
   }
 
   if (action === 'attach_voucher') {
-    const { confirmation_no, voucher_file_url } = body;
+    const { confirmation_no, voucher_file_url, voucher_storage_path } = body;
     // Confirmed rule: a booking cannot reach จองสำเร็จ without the Choowap confirmation number.
     if (!confirmation_no || !String(confirmation_no).trim()) return fail(res, 400, 'ต้องกรอกเลขยืนยันจากชูวับก่อน');
+    // Either a directly-uploaded file (voucher_storage_path, private Storage bucket) or a
+    // manually-pasted external link (voucher_file_url) — the admin's choice, not required together.
+    if (!voucher_storage_path && !(voucher_file_url && String(voucher_file_url).trim())) {
+      return fail(res, 400, 'แนบไฟล์หรือวางลิงก์วอเชอร์อย่างใดอย่างหนึ่งก่อน');
+    }
     const { error } = await supabase
       .from('bookings')
-      .update({ status: 'จองสำเร็จ', confirmation_no: String(confirmation_no).trim(), voucher_file_url: voucher_file_url || null, ...stamp })
+      .update({
+        status: 'จองสำเร็จ',
+        confirmation_no: String(confirmation_no).trim(),
+        voucher_file_url: voucher_file_url || null,
+        voucher_storage_path: voucher_storage_path || null,
+        ...stamp
+      })
       .eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
     return await respondFresh(res, booking_id);
@@ -300,6 +364,55 @@ async function handlePatch(req, res, actor, isAdmin, body) {
     return await respondFresh(res, booking_id);
   }
 
+  if (action === 'add_guest_admin') {
+    const { guest, force } = body;
+    if (!guest || !guest.name || !String(guest.name).trim()) return fail(res, 400, 'ข้อมูลผู้เข้าพักไม่ครบ');
+    if (!guest || (guest.gender !== 'M' && guest.gender !== 'F')) return fail(res, 400, 'ข้อมูลผู้เข้าพักไม่ครบ');
+    const { data: existing } = await supabase.from('booking_guests').select('gender').eq('booking_id', booking_id);
+    const { maleEmpty, femaleEmpty } = emptyBedsByGender(existing || []);
+    const empty = guest.gender === 'M' ? maleEmpty : femaleEmpty;
+    if (empty <= 0 && !force) return fail(res, 400, `ไม่มีเตียงว่างสำหรับเพศ${guest.gender === 'M' ? 'ชาย' : 'หญิง'}ในห้องนี้แล้ว`);
+    const { error } = await supabase.from('booking_guests').insert({
+      booking_id,
+      team_code: guest.team_code || null,
+      employee_code: guest.employee_code || null,
+      name: String(guest.name).trim(),
+      phone: guest.phone || null,
+      gender: guest.gender
+    });
+    if (error) return fail(res, 500, error.message);
+    return await respondFresh(res, booking_id);
+  }
+
+  if (action === 'accept_join_request' || action === 'dismiss_join_request') {
+    const { join_request_id, force } = body;
+    if (!join_request_id) return fail(res, 400, 'ไม่ได้ระบุคำขอเข้าร่วม');
+    const { data: jr } = await supabase.from('booking_join_requests').select('*').eq('id', join_request_id).maybeSingle();
+    if (!jr) return fail(res, 404, 'ไม่พบคำขอนี้');
+
+    if (action === 'dismiss_join_request') {
+      await supabase.from('booking_join_requests').update({ status: 'dismissed', decided_by_employee: actor.code, decided_at: new Date().toISOString() }).eq('id', join_request_id);
+      return await respondFresh(res, booking_id);
+    }
+
+    // Re-check bed availability at approval time — it may have filled since the request was filed.
+    const { data: existing } = await supabase.from('booking_guests').select('gender').eq('booking_id', booking_id);
+    const { maleEmpty, femaleEmpty } = emptyBedsByGender(existing || []);
+    const empty = jr.guest_gender === 'M' ? maleEmpty : femaleEmpty;
+    if (empty <= 0 && !force) return fail(res, 400, `ไม่มีเตียงว่างสำหรับเพศ${jr.guest_gender === 'M' ? 'ชาย' : 'หญิง'}ในห้องนี้แล้ว`);
+
+    await supabase.from('booking_guests').insert({
+      booking_id,
+      team_code: jr.guest_team_code,
+      employee_code: jr.guest_employee_code,
+      name: jr.guest_name,
+      phone: jr.guest_phone,
+      gender: jr.guest_gender
+    });
+    await supabase.from('booking_join_requests').update({ status: 'accepted', decided_by_employee: actor.code, decided_at: new Date().toISOString() }).eq('id', join_request_id);
+    return await respondFresh(res, booking_id);
+  }
+
   if (action === 'cancel_booking') {
     const { error } = await supabase.from('bookings').delete().eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
@@ -308,11 +421,18 @@ async function handlePatch(req, res, actor, isAdmin, body) {
 
   if (action === 'edit') {
     // Employee resubmitting after a reject: replace guests + hotel choices wholesale.
-    const { checkin_date, checkout_date, note, guests, hotel_choices, branch_code } = body;
+    const { checkin_date, checkout_date, note, guests, hotel_choices, branch_code, work_schedule_id, mission_type, mission_type_note } = body;
     if (!checkin_date || !checkout_date) return fail(res, 400, 'ยังไม่ได้เลือกวันเข้าพัก–วันออก');
     if (new Date(checkout_date) <= new Date(checkin_date)) return fail(res, 400, 'วันออกต้องหลังวันเข้าพัก');
     if (!Array.isArray(guests) || guests.length === 0) return fail(res, 400, 'ยังไม่ได้กรอกผู้เข้าพัก');
     if (!Array.isArray(hotel_choices) || hotel_choices.length === 0) return fail(res, 400, 'ยังไม่ได้เลือกที่พัก');
+
+    const { data: currentBk } = await supabase.from('bookings').select('work_schedule_id').eq('id', booking_id).maybeSingle();
+    const isAdhoc = work_schedule_id !== undefined ? !work_schedule_id : !(currentBk && currentBk.work_schedule_id);
+    if (isAdhoc) {
+      if (!MISSION_TYPES.includes(mission_type)) return fail(res, 400, 'ต้องระบุประเภทภารกิจสำหรับการจองแบบเฉพาะกิจ');
+      if (mission_type === 'อื่นๆ' && !String(mission_type_note || '').trim()) return fail(res, 400, 'กรุณาระบุรายละเอียดภารกิจ');
+    }
 
     const { error: upErr } = await supabase
       .from('bookings')
@@ -324,6 +444,8 @@ async function handlePatch(req, res, actor, isAdmin, body) {
         status: 'ส่งคำขอ',
         reject_reason: null,
         chosen_hotel_choice_id: null,
+        mission_type: isAdhoc ? mission_type : null,
+        mission_type_note: isAdhoc && mission_type === 'อื่นๆ' ? (mission_type_note || null) : null,
         ...stamp
       })
       .eq('id', booking_id);
@@ -363,4 +485,8 @@ async function respondFresh(res, id) {
   json(res, 200, { booking: data ? decorate(data) : null });
 }
 
-module.exports.SELF_SERVE_POSITIONS = SELF_SERVE_POSITIONS;
+// dashboard-summary.js reuses these so live-period cost figures are computed with the
+// exact same query shape + formula as everywhere else in the app, instead of a second
+// copy drifting.
+module.exports.decorate = decorate;
+module.exports.BOOKING_SELECT = BOOKING_SELECT;

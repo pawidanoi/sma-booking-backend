@@ -93,6 +93,7 @@
   .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
   .chip{border:1.5px solid var(--line);border-radius:11px;padding:11px 12px;font-size:13px;font-weight:600;cursor:pointer;flex:1;text-align:center;min-width:44%}
   .chip:active{background:#fff3da}
+  .chip.sel{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
   .toast{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:#2a1810;color:#fff;font-size:12.5px;font-weight:600;padding:10px 18px;border-radius:999px;opacity:0;transition:.3s;pointer-events:none;max-width:80%;text-align:center;z-index:50}
   .toast.show{opacity:1}
   .errtext{font-size:12.5px;color:var(--danger);font-weight:700;margin-top:8px}
@@ -121,7 +122,9 @@ let ME = null, IS_ADMIN = false;
 let BRANCHES = [], HOTELS = [], TEAMS = [], STAFF_LIST = [], SCHEDULE = [];
 let STAFF = {}, BRANCH_BY_CODE = {}, PROVINCES = [];
 let BOOKINGS = [];
-let S = {}, CH = {}, VOUCH = {}, REJ = {};
+let MISSION_TYPES = ["งานแฟร์","งานเปิดสาขา","สำรวจพื้นที่","อื่นๆ"];
+let S = {}, CH = {}, VOUCH = {}, REJ = {}, ADDG = {}, JOINQ = {}, DEP = {};
+let SPARE_LIST = [], DEPCLAIMS = [];
 
 const $ = s => document.querySelector(s);
 function toast(t){ const e=$("#toast"); e.textContent=t; e.classList.add("show"); setTimeout(()=>e.classList.remove("show"),2200); }
@@ -189,6 +192,10 @@ function normBooking(b){
   }));
   const pending = (b.booking_changes||[]).filter(c=>c.status==='pending');
   const ch = pending.length ? pending[pending.length-1] : null;
+  const joinRequests = (b.booking_join_requests||[]).filter(j=>j.status==='pending').map(j=>({
+    id:j.id, name:j.guest_name, gender:j.guest_gender, phone:j.guest_phone,
+    code:j.guest_employee_code, team:j.guest_team_code, requestedBy:j.requested_by_employee
+  }));
   return {
     id:b.id, guestList:guests, team:b.team_code, branchCode:b.branch_code,
     branch: b.branches ? b.branches.name : b.branch_code,
@@ -197,12 +204,14 @@ function normBooking(b){
     blng: b.branches && b.branches.lng!=null ? Number(b.branches.lng) : null,
     jobId:b.work_schedule_id, checkin:b.checkin_date, checkout:b.checkout_date,
     status:b.status, rejectReason:b.reject_reason, note:b.note||'',
+    missionType:b.mission_type||null, missionNote:b.mission_type_note||null,
     submittedByCode:b.created_by_employee, adhoc: !b.work_schedule_id,
     src: b.team_code==='AREA' ? 'AREA' : 'SMA',
     hotels: choices,
     chosenChoiceId: b.chosen_hotel_choice_id,
-    voucher: b.status==='จองสำเร็จ' || b.confirmation_no ? { code:b.confirmation_no, url:b.voucher_file_url } : null,
+    voucher: b.status==='จองสำเร็จ' || b.confirmation_no ? { code:b.confirmation_no, url:b.voucher_file_url, storagePath:b.voucher_storage_path } : null,
     change: ch ? { id:ch.id, type:ch.type, rooms:ch.new_rooms, newCheckin:ch.new_checkin, newCheckout:ch.new_checkout, note:ch.note } : null,
+    joinRequests,
     derived: b.derived || {}
   };
 }
@@ -238,9 +247,12 @@ function pillOf(b){
 function updateRolebar(){
   const bar=$("#rolebar");
   if(!ME){ bar.innerHTML='ระบบจองที่พัก SMA · เข้าสู่ระบบด้วยรหัสพนักงาน'; return; }
-  const showAdhoc = IS_ADMIN || isSpecialRole(ME.position);
+  // isSpecialRole() checks the same 4 positions the backend gates the dashboard on
+  // (SELF_SERVE_POSITIONS / isDashboardViewer) — 'แอดมิน' is already one of them.
+  const showDashboard = isSpecialRole(ME.position);
   bar.innerHTML = `สวัสดี <b>${esc(nickOf(ME))}</b> · ${esc(ME.team_code)} <span class="badge">${esc(IS_ADMIN?'แอดมิน':ME.position||'พนักงาน')}</span>
-    ${showAdhoc?'<a onclick="openAdhocForm()">จองเพิ่ม</a>':''}
+    <a onclick="openAdhocForm()">จองเพิ่ม</a>
+    ${showDashboard?'<a href="/dashboard.html" target="_blank">แดชบอร์ด</a>':''}
     <a onclick="reloadBookings(true)">รีเฟรช</a>
     <a onclick="logout()">ออกจากระบบ</a>`;
 }
@@ -275,6 +287,7 @@ async function doLogin(){
     STAFF={}; STAFF_LIST.forEach(s=>{ STAFF[s.code]=s; });
     BRANCH_BY_CODE={}; BRANCHES.forEach(b=>{ BRANCH_BY_CODE[b.code]=b; });
     PROVINCES=[...new Set(HOTELS.filter(h=>h.prov).map(h=>h.prov))].sort();
+    if(d.constants && d.constants.mission_types) MISSION_TYPES = d.constants.mission_types;
     updateRolebar();
     await reloadBookings(false);
     goHome();
@@ -314,8 +327,23 @@ function renderHome(){
       <div class="s">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.prov?(' · จ.'+esc(j.prov)):''}</div>
       <div style="margin-top:5px">${badge}</div></div><div class="chev">›</div></div>`;
   }).join("") || `<div class="hint">ยังไม่มีงานที่ต้องจองที่พักสำหรับทีม ${esc(ME.team_code)} ในขณะนี้</div>`;
+
+  // Ad-hoc bookings the employee submitted themselves, not tied to a job row above
+  // (avoid listing the same booking twice if it happens to match a job).
+  const jobIdsShown = new Set(jobs.map(j=>j.id));
+  const mine = BOOKINGS.filter(b=>b.submittedByCode===ME.code && !(b.jobId && jobIdsShown.has(b.jobId)));
+  const mineRows = mine.map(b=>`<div class="job" onclick="renderStatus('${b.id}')">
+    <div class="d" style="background:var(--amber-soft);color:var(--amber)">${(b.derived.people!=null?b.derived.people:0)}<small>คน</small></div>
+    <div class="g"><div class="t">${esc(b.branch)}</div><div class="s">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
+     <div style="margin-top:5px">${pillOf(b)}</div></div><div class="chev">›</div></div>`).join("");
+
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>งานที่ต้องจองที่พัก</h1><span class="sub">${esc(ME.team_code)}</span></div>
-   <div class="body"><div class="hint">แผนงานบอกว่าต้องไปสาขาไหน — วันเข้าพักคุณเลือกเองในฟอร์ม</div>${rows}</div></div>`;
+   <div class="body"><div class="hint">แผนงานบอกว่าต้องไปสาขาไหน — วันเข้าพักคุณเลือกเองในฟอร์ม</div>
+    <button class="btn ghost" onclick="openAdhocForm()">+ จองเพิ่ม (นอกแผนงาน)</button>
+    ${rows}
+    ${mineRows?`<div class="label" style="margin-top:18px">คำขอนอกแผนงานของฉัน</div>${mineRows}`:''}
+    <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
+   </div></div>`;
 }
 
 function renderSpecialHome(){
@@ -328,6 +356,7 @@ function renderSpecialHome(){
    <div class="body"><div class="hint">ตำแหน่งนี้ไม่มีแผนงานทีม SMA ประจำ — เลือกสาขาที่จะไปและวันเข้าพักเองได้เลย</div>
     <button class="btn" onclick="openAdhocForm()">+ จองเพิ่ม</button>
     ${rows?`<div class="label" style="margin-top:18px">คำขอของฉัน</div>${rows}`:''}
+    <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
    </div></div>`;
 }
 
@@ -342,8 +371,13 @@ function openForm(scheduleId){
 function openAdhocForm(){
   S={ editId:null, job:{ id:null, branchCode:'', branch:'', prov:null, start:'', end:'', adv:0, blat:null, blng:null, adhoc:true },
       manualProv:null, checkin:'', checkout:'', hotelPicks:[], addingHotel:false,
-      newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", busy:false };
+      newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", missionType:'', missionNote:'', busy:false };
   renderForm();
+}
+function setMissionType(v){
+  S.missionType=v;
+  if(v!=='อื่นๆ') S.missionNote='';
+  rerender(renderForm);
 }
 function openFormEdit(id){
   const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); return; }
@@ -363,7 +397,7 @@ function openFormEdit(id){
       addingHotel:false, newHotelDraft:{n:'',map:'',p:''},
       f: stored.filter(g=>g.g==='f').length,
       m: stored.filter(g=>g.g==='m').length,
-      slots, note:b.note||"", busy:false };
+      slots, note:b.note||"", missionType:b.missionType||'', missionNote:b.missionNote||'', busy:false };
   renderForm();
 }
 function bookingGuestList(id){ const b=findB(id); return (b && b.guestList) || []; }
@@ -441,6 +475,12 @@ function renderForm(){
     : `<div class="card"><div class="label">สาขาที่ต้องไป (จากแผนงาน)</div><div class="val" style="font-size:14px">${esc(j.branch)}</div>
        ${j.start?`<div class="hint" style="margin:4px 0 0">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.adv?` · ควรเข้าก่อน ${j.adv} วัน`:''}</div>`:''}</div>`;
 
+  const missionCard = j.adhoc ? `<div class="card"><div class="label">ประเภทภารกิจ (จำเป็น)</div>
+    <div class="chips">${MISSION_TYPES.map(t=>`<div class="chip ${S.missionType===t?'sel':''}" onclick="setMissionType('${esc(t)}')">${esc(t)}</div>`).join("")}</div>
+    ${S.missionType==='อื่นๆ'?`<div class="label" style="margin-top:10px">ระบุประเภทภารกิจ</div>
+      <input class="txt" placeholder="ระบุสั้นๆ" value="${esc(S.missionNote||'')}" oninput="S.missionNote=this.value"/>`:''}
+    </div>` : '';
+
   let list = effProv ? HOTELS.filter(h=>h.prov===effProv) : [];
   if(j.blat!=null){
     list = list.map(h=>Object.assign({}, h, { _km:haversine(j.blat,j.blng,h.lat,h.lng) }))
@@ -510,14 +550,15 @@ function renderForm(){
   const cost=avg*rooms.length*(nights||0);
   const namesOk = S.slots.every(s=>s.name && String(s.name).trim());
   const dateOk = S.checkin && S.checkout && new Date(S.checkout)>new Date(S.checkin);
-  const ready = !S.busy && S.hotelPicks.length>0 && dateOk && ppl>0 && namesOk && !!effProv && (!j.adhoc || j.branchCode);
+  const missionOk = !j.adhoc || (S.missionType && (S.missionType!=='อื่นๆ' || (S.missionNote && S.missionNote.trim())));
+  const ready = !S.busy && S.hotelPicks.length>0 && dateOk && ppl>0 && namesOk && !!effProv && (!j.adhoc || j.branchCode) && missionOk;
   const priceWarn = S.hotelPicks.some(h=>(h.price||0)>600)
     ? `<div class="warn a">⚠️ มีที่พักราคาเกิน 600฿/ห้อง/คืน — ระบุเหตุผลในหมายเหตุด้วย</div>` : '';
 
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span>
     <div style="flex:1"><h1>${S.editId?'แก้ไขคำขอ':(j.adhoc?'จองเพิ่ม':'ขอที่พัก')}</h1><span class="sub">${esc(j.branch||'เลือกสาขา')}</span></div></div>
    <div class="body">
-    ${branchCard}${branchPicker}${provPicker}
+    ${branchCard}${branchPicker}${provPicker}${missionCard}
     <div class="card"><div class="label">วันเข้าพัก – วันออก (เลือกเอง)</div>
      <div style="display:flex;gap:10px">
       <input class="txt" type="date" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
@@ -551,6 +592,8 @@ async function submitBooking(){
     checkin_date: S.checkin,
     checkout_date: S.checkout,
     note: S.note||'',
+    mission_type: S.job.adhoc ? (S.missionType||null) : null,
+    mission_type_note: S.job.adhoc && S.missionType==='อื่นๆ' ? (S.missionNote||null) : null,
     guests: guests.map(g=>({
       team_code: g.team, employee_code: g.code||null,
       name: g.name, phone: g.phone||null, gender: g.g==='f' ? 'F' : 'M'
@@ -594,9 +637,10 @@ function renderStatus(id){
     <div class="label" style="color:var(--danger)">⚠️ แอดมินส่งกลับให้แก้ไข</div>
     <div style="font-size:13.5px;font-weight:600;margin-bottom:10px">${esc(b.rejectReason||'กรุณาตรวจสอบข้อมูลอีกครั้ง')}</div>
     <button class="btn" onclick="openFormEdit('${b.id}')">แก้ไขคำขอ</button></div>` : '';
+  const voucherLink = b.voucher && (b.voucher.storagePath ? ('/api/voucher-redirect?booking_id='+encodeURIComponent(b.id)) : b.voucher.url);
   const voucherBox = (b.status==='จองสำเร็จ' && b.voucher) ? `<div class="card"><div class="label">วอเชอร์เข้าพัก</div>
     <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc(b.voucher.code||'—')}</span></div>
-    ${b.voucher.url?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(b.voucher.url)}" target="_blank" rel="noopener">เปิดวอเชอร์</a></span></div>`:''}</div>` : '';
+    ${voucherLink?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(voucherLink)}" target="_blank" rel="noopener">เปิดวอเชอร์</a></span></div>`:''}</div>` : '';
   const order=['ส่งคำขอ','ดำเนินการจอง','จองสำเร็จ'];
   const labels={'ส่งคำขอ':'ส่งคำขอ','ดำเนินการจอง':'ดำเนินการจอง','จองสำเร็จ':'จองเสร็จแล้ว'};
   const curIdx=(b.status==='ต้องแก้ไข'||b.status==='ติดปัญหา')?-1:order.indexOf(b.status);
@@ -619,6 +663,8 @@ function renderStatus(id){
     ${rejectBox}
     <div class="card"><ul class="timeline">${tl}</ul></div>
     ${voucherBox}
+    ${b.status==='จองสำเร็จ'?`<div class="card"><div class="label">มัดจำที่จ่ายไปไหม?</div>
+      <button class="btn ghost" onclick="openDepositClaim('${b.id}')">ขอเบิกคืนเงินมัดจำ</button></div>`:''}
     ${b.change?`<div class="card"><div class="label">เรื่องที่แจ้งไปแล้ว รอแอดมินรับเรื่อง</div>
       <div style="font-size:13px;font-weight:600">${esc(b.change.type)}${b.change.note?' — '+esc(b.change.note):''}</div></div>`:''}
     <div class="card"><div class="label">มีเรื่องแจ้ง?</div>${chips}</div></div></div>`;
@@ -669,23 +715,29 @@ async function applyChange(){
 function renderAdminQueue(){
   const order={'ส่งคำขอ':0,'ดำเนินการจอง':1,'ติดปัญหา':2,'ต้องแก้ไข':3,'จองสำเร็จ':4};
   const sorted=BOOKINGS.slice().sort((a,b)=>{
-    if(a.change && !b.change) return -1;
-    if(!a.change && b.change) return 1;
+    const aFlag=a.change||(a.joinRequests&&a.joinRequests.length), bFlag=b.change||(b.joinRequests&&b.joinRequests.length);
+    if(aFlag && !bFlag) return -1;
+    if(!aFlag && bFlag) return 1;
     return (order[a.status]??9)-(order[b.status]??9);
   });
   const rows=sorted.map(b=>{
     const src=b.src==='AREA'?`<span class="pill area">AREA</span>`:`<span class="pill ok">SMA</span>`;
     const adhoc=b.adhoc?`<span class="pill wait">จองเพิ่ม</span>`:'';
+    const joinBadge=(b.joinRequests&&b.joinRequests.length)?`<span class="pill soon">ขอเข้าร่วม</span>`:'';
     const d=b.derived||{};
     return `<div class="job" onclick="renderAdminDetail('${b.id}')">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
-      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
+      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
   const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ').length;
   const flagged=BOOKINGS.filter(b=>b.change).length;
-  $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
+  $("#app").innerHTML=`<div class="screen"><div class="appbar">
+    <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline" onclick="renderSpareBeds()">เตียงว่าง</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCheckedIn()">เข้าพักอยู่</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -710,6 +762,149 @@ function markProblem(id){ adminAction(id,'mark_problem',null,'บันทึก
 function acceptChange(id,changeId){ adminAction(id,'accept_change',{ change_id:changeId },'รับเรื่องแล้ว — ปรับการจองเรียบร้อย'); }
 function dismissChange(id,changeId){ adminAction(id,'dismiss_change',{ change_id:changeId },'เก็บการจองไว้ตามเดิม'); }
 function deleteBooking(id){ adminAction(id,'cancel_booking',null,'ยกเลิกการจองนี้แล้ว ✓',()=>{ setTimeout(renderAdminQueue,400); }); }
+function approveJoin(id,reqId){ adminAction(id,'accept_join_request',{ join_request_id:reqId },'อนุมัติแล้ว — เพิ่มเข้าห้องเรียบร้อย'); }
+function rejectJoin(id,reqId){ adminAction(id,'dismiss_join_request',{ join_request_id:reqId },'ไม่อนุมัติคำขอนี้'); }
+
+/* ================= เตียงว่าง (แอดมินเพิ่มคนเอง) ================= */
+function renderSpareBeds(){
+  const spare=BOOKINGS.filter(b=>b.status==='จองสำเร็จ' && (b.derived.empty_beds||0)>0);
+  const rows=spare.map(b=>`<div class="job" onclick="renderSpareBedDetail('${b.id}')">
+    <div class="d" style="background:var(--success-soft);color:var(--success)">${b.derived.empty_beds}<small>ว่าง</small></div>
+    <div class="g"><div class="t">${esc(b.branch)}</div>
+     <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div></div><div class="chev">›</div></div>`).join("");
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>ห้องที่มีเตียงว่าง</h1></div>
+   <div class="body"><div class="hint">การจองที่จองสำเร็จแล้วแต่ยังมีเตียงว่าง — เพิ่มคนเข้าไปได้เลย</div>
+    ${rows||'<div class="hint">ตอนนี้ไม่มีการจองที่มีเตียงว่าง</div>'}</div></div>`;
+}
+function renderSpareBedDetail(id){
+  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); renderSpareBeds(); return; }
+  ADDG = { bookingId:id, team:ME.team_code, code:'', name:'', phone:'', gender:'f', manual:false, force:false, busy:false };
+  drawSpareBedDetail();
+}
+function setAddgCode(v){
+  if(v==='__manual__'){ ADDG.code=''; ADDG.manual=true; ADDG.name=''; ADDG.phone=''; }
+  else { ADDG.code=v; ADDG.manual=false; const st=STAFF[v]; if(st){ ADDG.name=st.name+' ('+nickOf(st)+')'; ADDG.phone=st.phone||''; } }
+  rerender(drawSpareBedDetail);
+}
+function drawSpareBedDetail(){
+  const b=findB(ADDG.bookingId); if(!b){ renderSpareBeds(); return; }
+  const guests=bookingGuestList(ADDG.bookingId), rooms=pair(guests);
+  const rc=rooms.map((r,k)=>{
+    const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
+    const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
+    return `<div class="room ${r.g}"><div class="rh"><span>ห้อง ${k+1}</span><span>${r.g==='f'?'หญิง':'ชาย'}</span></div><div class="oc">${nm}</div>${e}</div>`;
+  }).join("");
+  const opts=staffOfTeam(ADDG.team);
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderSpareBeds()">‹</span><h1>เพิ่มคนเข้าห้อง</h1></div>
+   <div class="body">
+    <div class="card"><div class="label">${esc(b.branch)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
+     <div class="roomgrid">${rc}</div></div>
+    <div class="card"><div class="label">เพศ</div>
+     <div class="chips"><div class="chip ${ADDG.gender==='f'?'sel':''}" onclick="ADDG.gender='f';rerender(drawSpareBedDetail)">หญิง</div>
+      <div class="chip ${ADDG.gender==='m'?'sel':''}" onclick="ADDG.gender='m';rerender(drawSpareBedDetail)">ชาย</div></div>
+     <div class="label" style="margin-top:10px">ทีม</div>
+     <select class="txt" onchange="ADDG.team=this.value;rerender(drawSpareBedDetail)">${TEAMS.map(t=>`<option ${ADDG.team===t?'selected':''}>${esc(t)}</option>`).join("")}</select>
+     <div class="label" style="margin-top:10px">รหัสพนักงาน</div>
+     <select class="txt" onchange="setAddgCode(this.value)">
+      <option value="">— เลือกรหัสพนักงาน —</option>
+      ${opts.map(o=>`<option value="${esc(o.code)}" ${ADDG.code===o.code?'selected':''}>${esc(o.code)} — ${esc(o.name)} (${esc(o.nick)})</option>`).join("")}
+      <option value="__manual__" ${ADDG.manual?'selected':''}>อื่นๆ (กรอกเอง)</option></select>
+     ${ADDG.manual?`<div class="label" style="margin-top:8px">ชื่อ-สกุล</div><input class="txt" value="${esc(ADDG.name||'')}" oninput="ADDG.name=this.value"/>
+      <div class="label" style="margin-top:8px">เบอร์โทร</div><input class="txt" value="${esc(ADDG.phone||'')}" oninput="ADDG.phone=this.value"/>`
+     : (ADDG.code?`<div class="hint" style="margin-top:6px">${esc(ADDG.name)} · ${esc(ADDG.phone||'ไม่มีเบอร์')}</div>`:'')}
+    </div>
+    <button class="btn" ${ADDG.busy?'disabled':''} onclick="confirmAddGuestAdmin()">${ADDG.busy?'กำลังเพิ่ม…':'เพิ่มคนนี้เข้าที่พัก'}</button></div></div>`;
+}
+async function confirmAddGuestAdmin(){
+  if(!ADDG.name || !String(ADDG.name).trim()){ toast('กรอกชื่อก่อน'); return; }
+  ADDG.busy=true; rerender(drawSpareBedDetail);
+  try{
+    await apiSend('/bookings','PATCH',{ booking_id:ADDG.bookingId, action:'add_guest_admin',
+      guest:{ team_code:ADDG.team, employee_code:ADDG.code||null, name:ADDG.name, phone:ADDG.phone||null, gender:ADDG.gender==='f'?'F':'M' } });
+    toast('เพิ่มคนเข้าที่พักแล้ว ✓');
+    await reloadBookings(false);
+    ADDG.busy=false;
+    renderSpareBedDetail(ADDG.bookingId);
+  }catch(e){ ADDG.busy=false; toast(e.message); rerender(drawSpareBedDetail); }
+}
+
+/* ================= เตียงว่าง (พนักงานขอเข้าร่วม) ================= */
+async function renderJoinBrowse(){
+  screenLoading('กำลังโหลดห้องว่าง…');
+  try{
+    const d = await apiGet('/bookings?scope=open_beds&actor='+encodeURIComponent(ME.code));
+    SPARE_LIST = d.bookings || [];
+  }catch(e){ toast(e.message); SPARE_LIST=[]; }
+  drawJoinBrowse();
+}
+function drawJoinBrowse(){
+  const rows = SPARE_LIST.map(b=>`<div class="job" onclick="openJoinRequest('${b.id}')">
+    <div class="d" style="background:var(--success-soft);color:var(--success)">${b.empty_beds}<small>ว่าง</small></div>
+    <div class="g"><div class="t">${esc(b.branches?b.branches.name:b.branch_code)}</div><div class="s">${esc(b.team_code)} · ${fmtDate(b.checkin_date)}–${fmtDate(b.checkout_date)}</div></div>
+    <div class="chev">›</div></div>`).join("");
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span><h1>ห้องที่มีเตียงว่าง</h1></div>
+   <div class="body"><div class="hint">เลือกห้องที่จะขอไปพักด้วย — แอดมินต้องอนุมัติก่อนถึงจะเข้าได้จริง</div>
+    ${rows||'<div class="hint">ตอนนี้ไม่มีห้องว่างให้ขอเข้าร่วม</div>'}</div></div>`;
+}
+function openJoinRequest(bookingId){
+  JOINQ = { bookingId, code:ME.code, name:ME.name, phone:ME.phone||'', gender: ME.gender==='F'?'f':'m', team:ME.team_code, manual:false, note:'', busy:false };
+  drawJoinRequest();
+}
+function setJoinCode(v){
+  if(v==='__manual__'){ JOINQ.code=''; JOINQ.manual=true; JOINQ.name=''; JOINQ.phone=''; }
+  else { JOINQ.code=v; JOINQ.manual=false; const st=STAFF[v]; if(st){ JOINQ.name=st.name+' ('+nickOf(st)+')'; JOINQ.phone=st.phone||''; } }
+  rerender(drawJoinRequest);
+}
+function drawJoinRequest(){
+  const b = SPARE_LIST.find(x=>x.id===JOINQ.bookingId); if(!b){ drawJoinBrowse(); return; }
+  const opts=staffOfTeam(JOINQ.team);
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="drawJoinBrowse()">‹</span><h1>ขอเข้าร่วมที่พัก</h1></div>
+   <div class="body"><div class="card"><div class="val" style="font-size:14px">${esc(b.branches?b.branches.name:b.branch_code)}</div>
+     <div class="hint">${fmtDate(b.checkin_date)}–${fmtDate(b.checkout_date)} · ${esc(b.team_code)}</div></div>
+    <div class="card"><div class="label">เพศ</div>
+     <div class="chips"><div class="chip ${JOINQ.gender==='f'?'sel':''}" onclick="JOINQ.gender='f';rerender(drawJoinRequest)">หญิง</div>
+      <div class="chip ${JOINQ.gender==='m'?'sel':''}" onclick="JOINQ.gender='m';rerender(drawJoinRequest)">ชาย</div></div>
+     <div class="label" style="margin-top:10px">ทีม</div>
+     <select class="txt" onchange="JOINQ.team=this.value;rerender(drawJoinRequest)">${TEAMS.map(t=>`<option ${JOINQ.team===t?'selected':''}>${esc(t)}</option>`).join("")}</select>
+     <div class="label" style="margin-top:10px">รหัสพนักงาน (ค่าเริ่มต้นคือตัวคุณเอง — แก้ได้ถ้าขอแทนเพื่อน)</div>
+     <select class="txt" onchange="setJoinCode(this.value)">
+      <option value="">— เลือกรหัสพนักงาน —</option>
+      ${opts.map(o=>`<option value="${esc(o.code)}" ${JOINQ.code===o.code?'selected':''}>${esc(o.code)} — ${esc(o.name)} (${esc(o.nick)})</option>`).join("")}
+      <option value="__manual__" ${JOINQ.manual?'selected':''}>อื่นๆ (กรอกเอง)</option></select>
+     ${JOINQ.manual?`<div class="label" style="margin-top:8px">ชื่อ-สกุล</div><input class="txt" value="${esc(JOINQ.name||'')}" oninput="JOINQ.name=this.value"/>
+      <div class="label" style="margin-top:8px">เบอร์โทร</div><input class="txt" value="${esc(JOINQ.phone||'')}" oninput="JOINQ.phone=this.value"/>`
+     : (JOINQ.code?`<div class="hint" style="margin-top:6px">${esc(JOINQ.name)} · ${esc(JOINQ.phone||'ไม่มีเบอร์')}</div>`:'')}
+     </div>
+    <div class="card"><div class="label">หมายเหตุถึงแอดมิน (ไม่บังคับ)</div>
+     <textarea class="txt" oninput="JOINQ.note=this.value">${esc(JOINQ.note)}</textarea></div>
+    <button class="btn" ${JOINQ.busy?'disabled':''} onclick="submitJoinRequest()">${JOINQ.busy?'กำลังส่ง…':'ส่งคำขอเข้าร่วม'}</button></div></div>`;
+}
+async function submitJoinRequest(){
+  if(!JOINQ.name || !String(JOINQ.name).trim()){ toast('กรอกชื่อก่อน'); return; }
+  JOINQ.busy=true; rerender(drawJoinRequest);
+  try{
+    await apiSend('/bookings','POST',{ action:'request_join', booking_id:JOINQ.bookingId,
+      guest:{ team_code:JOINQ.team, employee_code:JOINQ.code||null, name:JOINQ.name, phone:JOINQ.phone||null, gender:JOINQ.gender==='f'?'F':'M' } });
+    toast('ส่งคำขอเข้าร่วมแล้ว — รอแอดมินอนุมัติ');
+    goHome();
+  }catch(e){ JOINQ.busy=false; toast(e.message); rerender(drawJoinRequest); }
+}
+
+/* ================= กำลังเข้าพักอยู่ (แอดมิน) ================= */
+function renderCheckedIn(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const active = BOOKINGS.filter(b=>{
+    if(b.status!=='จองสำเร็จ') return false;
+    const ci=new Date(b.checkin), co=new Date(b.checkout);
+    return ci<=today && today<=co;
+  });
+  const rows = active.map(b=>`<div class="job" onclick="renderAdminDetail('${b.id}')">
+    <div class="d" style="background:var(--brand-soft);color:var(--brand)">${b.derived.people||0}<small>คน</small></div>
+    <div class="g"><div class="t">${esc(b.branch)}</div>
+     <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div></div><div class="chev">›</div></div>`).join("");
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>กำลังเข้าพักอยู่วันนี้</h1></div>
+   <div class="body">${rows||'<div class="hint">วันนี้ไม่มีใครเข้าพักอยู่</div>'}</div></div>`;
+}
 
 function renderReject(id){
   REJ={ id, reason:'', busy:false };
@@ -759,10 +954,15 @@ function renderAdminDetail(id){
         <div style="font-size:13.5px;font-weight:600">${esc(b.change.type)}${b.change.rooms?': '+b.change.rooms+' ห้อง':''}${b.change.newCheckin?': '+fmtDate(b.change.newCheckin)+' – '+fmtDate(b.change.newCheckout):''}${b.change.note?' — '+esc(b.change.note):''}</div>
         <button class="btn ghost" style="margin-top:10px" onclick="acceptChange('${b.id}','${b.change.id}')">รับเรื่อง & ปรับ</button>
         <button class="btn ghost" style="margin-top:8px" onclick="dismissChange('${b.id}','${b.change.id}')">ไม่ปรับ — ปิดเรื่อง</button></div>`);
+  const joinBox = (b.joinRequests||[]).map(jr=>`<div class="card" style="border-color:var(--success)">
+    <div class="label" style="color:var(--success)">🙋 ${esc(jr.name)} (${esc(jr.team||'')}) ขอเข้าร่วมที่พักนี้</div>
+    <button class="btn" onclick="approveJoin('${b.id}','${jr.id}')">อนุมัติ — เพิ่มเข้าห้อง</button>
+    <button class="btn ghost" style="margin-top:8px" onclick="rejectJoin('${b.id}','${jr.id}')">ไม่อนุมัติ</button></div>`).join("");
   const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
+  const adminVoucherLink = b.voucher && (b.voucher.storagePath ? ('/api/voucher-redirect?booking_id='+encodeURIComponent(b.id)) : b.voucher.url);
   const voucherShown = b.status==='จองสำเร็จ' ? `<div class="card"><div class="label">วอเชอร์ที่ส่งแล้ว</div>
      <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc((b.voucher&&b.voucher.code)||'—')}</span></div>
-     ${(b.voucher&&b.voucher.url)?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(b.voucher.url)}" target="_blank" rel="noopener">เปิด</a></span></div>`:''}</div>` : '';
+     ${adminVoucherLink?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(adminVoucherLink)}" target="_blank" rel="noopener">เปิด</a></span></div>`:''}</div>` : '';
   const actions = b.status==='ส่งคำขอ'
     ? `<button class="btn" onclick="startProcessing('${b.id}')">เริ่มดำเนินการจอง</button>
        <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
@@ -783,8 +983,9 @@ function renderAdminDetail(id){
       <span class="cp" onclick="copyTxt('${esc(b.checkin)} - ${esc(b.checkout)}')">คัดลอก</span></div>
      <div class="copyrow"><span class="k">ห้อง</span><span class="v">${rooms.length} ห้อง</span></div>
      <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
+     ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
      ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
-    ${rejectBanner}${changeBox}
+    ${rejectBanner}${changeBox}${joinBox}
     <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
      <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
      <div class="roomgrid">${rc}</div></div>
@@ -811,7 +1012,8 @@ function copyTxt(t){
 
 function renderVoucher(id){
   const b=findB(id)||{};
-  VOUCH={ code:(b.voucher&&b.voucher.code)||'', url:(b.voucher&&b.voucher.url)||'', busy:false };
+  VOUCH={ id, code:(b.voucher&&b.voucher.code)||'', url:(b.voucher&&b.voucher.url)||'',
+           file:null, fileName:'', uploadedPath:null, uploading:false, busy:false };
   drawVoucher(id);
 }
 function drawVoucher(id){
@@ -819,23 +1021,132 @@ function drawVoucher(id){
    <div class="body">
     <div class="card"><div class="label">เลขยืนยันจากชูวับ (จำเป็น)</div>
      <input class="txt" placeholder="เช่น CHW-889201" value="${esc(VOUCH.code)}" oninput="VOUCH.code=this.value"/></div>
-    <div class="card"><div class="label">ลิงก์ไฟล์วอเชอร์ (จำเป็น)</div>
+    <div class="card">
+     <div class="label">ไฟล์วอเชอร์ (เลือกอย่างใดอย่างหนึ่ง)</div>
+     <input type="file" accept="image/*,application/pdf" onchange="onVoucherFilePicked(event)"/>
+     ${VOUCH.fileName?`<div class="hint" style="margin-top:6px">📎 ${esc(VOUCH.fileName)} ${VOUCH.uploading?'· กำลังอัปโหลด…':(VOUCH.uploadedPath?'· พร้อมส่ง':'')}</div>`:''}
+     <div class="hint" style="text-align:center;margin:10px 0">— หรือ —</div>
+     <div class="label">วางลิงก์ไฟล์วอเชอร์</div>
      <input class="txt" placeholder="วางลิงก์ไฟล์วอเชอร์ (Google Drive / OneDrive)" value="${esc(VOUCH.url)}" oninput="VOUCH.url=this.value"/>
-     <div class="hint" style="margin:8px 0 0">อัปโหลดไฟล์ไว้ที่ไดรฟ์ แล้ววางลิงก์ที่แชร์ได้ตรงนี้ — พนักงานจะกดเปิดได้จากหน้าสถานะ</div></div>
-    <button class="btn" ${VOUCH.busy?'disabled':''} onclick="confirmVoucher('${id}')">${VOUCH.busy?'กำลังส่ง…':'ส่งวอเชอร์ให้พนักงาน'}</button></div></div>`;
+     <div class="hint" style="margin:8px 0 0">อัปโหลดไฟล์ด้านบน หรือวางลิงก์ที่แชร์ได้ — พนักงานจะกดเปิดได้จากหน้าสถานะ</div></div>
+    <button class="btn" ${(VOUCH.busy||VOUCH.uploading)?'disabled':''} onclick="confirmVoucher('${id}')">${VOUCH.busy?'กำลังส่ง…':'ส่งวอเชอร์ให้พนักงาน'}</button></div></div>`;
+}
+async function onVoucherFilePicked(ev){
+  const f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  VOUCH.file=f; VOUCH.fileName=f.name; VOUCH.uploadedPath=null; VOUCH.uploading=true; rerender(()=>drawVoucher(VOUCH.id));
+  try{
+    const sig = await apiSend('/voucher-upload-url','POST',{ booking_id:VOUCH.id, filename:f.name, content_type:f.type||'application/octet-stream' });
+    const putRes = await fetch(sig.signed_url, { method:'PUT', headers:{ 'Content-Type': f.type||'application/octet-stream' }, body:f });
+    if(!putRes.ok) throw new Error('อัปโหลดไฟล์ไม่สำเร็จ ('+putRes.status+')');
+    VOUCH.uploadedPath = sig.path;
+  }catch(e){
+    toast('อัปโหลดไม่สำเร็จ: '+e.message);
+    VOUCH.file=null; VOUCH.fileName=''; VOUCH.uploadedPath=null;
+  }
+  VOUCH.uploading=false; rerender(()=>drawVoucher(VOUCH.id));
 }
 async function confirmVoucher(id){
-  if(VOUCH.busy) return;
+  if(VOUCH.busy || VOUCH.uploading) return;
   if(!VOUCH.code||!VOUCH.code.trim()){ toast('กรอกเลขยืนยันจากชูวับก่อน'); return; }
-  if(!VOUCH.url||!VOUCH.url.trim()){ toast('วางลิงก์ไฟล์วอเชอร์ก่อน'); return; }
+  const finalPath = VOUCH.uploadedPath || null;
+  const finalUrl = !finalPath && VOUCH.url && VOUCH.url.trim() ? VOUCH.url.trim() : null;
+  if(!finalPath && !finalUrl){ toast('แนบไฟล์หรือวางลิงก์วอเชอร์อย่างใดอย่างหนึ่งก่อน'); return; }
   VOUCH.busy=true; rerender(()=>drawVoucher(id));
   try{
-    await apiSend('/bookings','PATCH',{ booking_id:id, action:'attach_voucher', confirmation_no:VOUCH.code, voucher_file_url:VOUCH.url });
+    await apiSend('/bookings','PATCH',{ booking_id:id, action:'attach_voucher', confirmation_no:VOUCH.code, voucher_storage_path:finalPath, voucher_file_url:finalUrl });
     toast('บันทึกวอเชอร์แล้ว ✓ พนักงานเห็นได้ทันที');
     await reloadBookings(false);
     VOUCH.busy=false;
     setTimeout(renderAdminQueue,400);
   }catch(e){ VOUCH.busy=false; toast(e.message); rerender(()=>drawVoucher(id)); }
+}
+
+/* ================= เบิกคืนมัดจำ (พนักงาน) ================= */
+function openDepositClaim(bookingId){
+  DEP = { bookingId, amount:'', bankAccount:'', bankName:'', accountName:ME.name, note:'', busy:false };
+  drawDepositClaim();
+}
+function drawDepositClaim(){
+  const b = findB(DEP.bookingId); if(!b){ goHome(); return; }
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderStatus('${DEP.bookingId}')">‹</span><h1>ขอเบิกคืนมัดจำ</h1></div>
+   <div class="body">
+    <div class="card"><div class="val" style="font-size:14px">${esc(b.branch)}</div>
+     <div class="hint">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div></div>
+    <div class="card"><div class="label">จำนวนเงินมัดจำ (บาท)</div>
+     <input class="txt" type="number" placeholder="เช่น 1000" value="${esc(DEP.amount)}" oninput="DEP.amount=this.value"/>
+     <div class="label" style="margin-top:10px">ธนาคาร</div>
+     <input class="txt" placeholder="เช่น กสิกรไทย" value="${esc(DEP.bankName)}" oninput="DEP.bankName=this.value"/>
+     <div class="label" style="margin-top:10px">เลขบัญชี</div>
+     <input class="txt" placeholder="เลขที่บัญชี" value="${esc(DEP.bankAccount)}" oninput="DEP.bankAccount=this.value"/>
+     <div class="label" style="margin-top:10px">ชื่อบัญชี</div>
+     <input class="txt" value="${esc(DEP.accountName)}" oninput="DEP.accountName=this.value"/>
+     <div class="label" style="margin-top:10px">หมายเหตุ (ไม่บังคับ)</div>
+     <textarea class="txt" oninput="DEP.note=this.value">${esc(DEP.note)}</textarea></div>
+    <button class="btn" ${DEP.busy?'disabled':''} onclick="submitDepositClaim()">${DEP.busy?'กำลังส่ง…':'ส่งคำขอเบิกคืน'}</button></div></div>`;
+}
+async function submitDepositClaim(){
+  const amt = parseFloat(DEP.amount);
+  if(!amt || amt<=0){ toast('กรอกจำนวนเงินให้ถูกต้อง'); return; }
+  if(!DEP.bankAccount || !String(DEP.bankAccount).trim()){ toast('กรอกเลขบัญชีก่อน'); return; }
+  DEP.busy=true; rerender(drawDepositClaim);
+  try{
+    await apiSend('/deposit-claims','POST',{
+      booking_id: DEP.bookingId, amount: amt, bank_name: DEP.bankName||'',
+      bank_account_no: DEP.bankAccount, bank_account_name: DEP.accountName||'', note: DEP.note||''
+    });
+    toast('ส่งคำขอเบิกคืนมัดจำแล้ว ✓');
+    renderStatus(DEP.bookingId);
+  }catch(e){ DEP.busy=false; toast(e.message); rerender(drawDepositClaim); }
+}
+
+/* ================= เบิกคืนมัดจำ (แอดมิน) ================= */
+async function renderDepositClaims(){
+  screenLoading('กำลังโหลดคำขอเบิกคืนมัดจำ…');
+  try{
+    const d = await apiGet('/deposit-claims?scope=admin&actor='+encodeURIComponent(ME.code));
+    DEPCLAIMS = d.claims || [];
+  }catch(e){ toast(e.message); DEPCLAIMS=[]; }
+  drawDepositClaims();
+}
+function drawDepositClaims(){
+  const STATUS_PILL = { 'รอตรวจ':'wait', 'อนุมัติแต่ยังไม่คืน':'soon', 'คืนแล้ว':'ok' };
+  const rows = DEPCLAIMS.map(c=>{
+    const staff = STAFF[c.claimed_by_employee];
+    return `<div class="job" onclick="renderDepositClaimDetail('${c.id}')">
+     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${Number(c.amount||0).toLocaleString()}<small>฿</small></div>
+     <div class="g"><div class="t">${esc(staff?staff.name:c.claimed_by_employee)}</div>
+      <div class="s">${esc(c.booking_id)} · ${esc(c.bank_name||'')}</div>
+      <div style="margin-top:5px"><span class="pill ${STATUS_PILL[c.status]||'wait'}">${esc(c.status)}</span></div></div><div class="chev">›</div></div>`;
+  }).join("");
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>คำขอเบิกคืนมัดจำ</h1></div>
+   <div class="body">${rows||'<div class="hint">ยังไม่มีคำขอเบิกคืนมัดจำ</div>'}</div></div>`;
+}
+function renderDepositClaimDetail(id){
+  const c = DEPCLAIMS.find(x=>x.id===id); if(!c){ toast('ไม่พบคำขอนี้'); renderDepositClaims(); return; }
+  const staff = STAFF[c.claimed_by_employee];
+  const next = { 'รอตรวจ':{action:'accept',label:'อนุมัติแต่ยังไม่คืน'}, 'อนุมัติแต่ยังไม่คืน':{action:'mark_returned',label:'คืนแล้ว'} }[c.status];
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderDepositClaims()">‹</span><h1>รายละเอียดคำขอ</h1></div>
+   <div class="body">
+    <div class="card">
+     <div class="copyrow"><span class="k">พนักงาน</span><span class="v">${esc(staff?staff.name:c.claimed_by_employee)}</span></div>
+     <div class="copyrow"><span class="k">การจอง</span><span class="v">${esc(c.booking_id)}</span></div>
+     <div class="copyrow"><span class="k">จำนวนเงิน</span><span class="v">${Number(c.amount||0).toLocaleString()}฿</span></div>
+     <div class="copyrow"><span class="k">ธนาคาร</span><span class="v">${esc(c.bank_name||'—')}</span></div>
+     <div class="copyrow"><span class="k">เลขบัญชี</span><span class="v">${esc(c.bank_account_no||'—')}</span><span class="cp" onclick="copyTxt('${esc(c.bank_account_no||'')}')">คัดลอก</span></div>
+     <div class="copyrow"><span class="k">ชื่อบัญชี</span><span class="v">${esc(c.bank_account_name||'—')}</span></div>
+     ${c.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(c.note)}</span></div>`:''}
+     <div class="copyrow"><span class="k">สถานะ</span><span class="v">${esc(c.status)}</span></div></div>
+    ${next?`<button class="btn" onclick="advanceClaim('${c.id}','${next.action}')">เปลี่ยนสถานะเป็น "${esc(next.label)}"</button>`:''}
+   </div></div>`;
+}
+async function advanceClaim(id,action){
+  try{
+    await apiSend('/deposit-claims','PATCH',{ claim_id:id, action });
+    toast('อัปเดตสถานะแล้ว ✓');
+    await renderDepositClaims();
+    renderDepositClaimDetail(id);
+  }catch(e){ toast(e.message); }
 }
 
 /* ---------------- boot ---------------- */

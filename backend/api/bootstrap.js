@@ -50,6 +50,9 @@ module.exports = async function handler(req, res) {
     hotels: hotelsRes.data || [],
     teams: teamsRes.data || [],
     staff: staffRes.data || [],
-    schedule: scheduleRes.data || []
+    schedule: scheduleRes.data || [],
+    // Keeps the frontend's mission-type options in sync with the DB CHECK constraint
+    // instead of a second hardcoded copy drifting out of step.
+    constants: { mission_types: ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'] }
   });
 };

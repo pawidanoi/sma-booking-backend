@@ -183,25 +183,32 @@ async function findEmployeeByLineId(lineUserId) {
 async function replyVoucher(event, employee) {
   const { data: booking } = await supabase
     .from('bookings')
-    .select('id, confirmation_no, voucher_file_url, status, checkin_date, checkout_date')
+    .select('id, confirmation_no, voucher_file_url, voucher_storage_path, status, checkin_date, checkout_date')
     .eq('created_by_employee', employee.code)
     .eq('status', 'จองสำเร็จ')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!booking || !booking.voucher_file_url) {
+  if (!booking || (!booking.voucher_file_url && !booking.voucher_storage_path)) {
     await reply(event.replyToken, [
       { type: 'text', text: 'ยังไม่มีวอเชอร์ล่าสุดในระบบค่ะ ถ้าเพิ่งจองอาจต้องรอแอดมินดำเนินการก่อนนะคะ' }
     ]);
     return;
   }
 
+  // A directly-uploaded voucher lives in a private Storage bucket with no stable
+  // public URL — route through the redirect endpoint, which mints a fresh signed
+  // URL on each click. A manually-pasted link (voucher_file_url) is already public.
+  const voucherUrl = booking.voucher_storage_path
+    ? `${process.env.PUBLIC_BASE_URL || 'https://sma-booking-backend.vercel.app'}/api/voucher-redirect?booking_id=${encodeURIComponent(booking.id)}`
+    : booking.voucher_file_url;
+
   await reply(event.replyToken, [
     {
       type: 'text',
       text: `วอเชอร์ล่าสุดค่ะ 🎫\nเลขยืนยัน: ${booking.confirmation_no || '-'}\nเข้าพัก: ${booking.checkin_date} – ${booking.checkout_date}`,
-      quickReply: { items: [qrUri('📎 เปิดไฟล์วอเชอร์', booking.voucher_file_url)] }
+      quickReply: { items: [qrUri('📎 เปิดไฟล์วอเชอร์', voucherUrl)] }
     }
   ]);
 }

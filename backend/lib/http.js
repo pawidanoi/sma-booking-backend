@@ -37,4 +37,15 @@ function nightsBetween(checkin, checkout) {
   return Math.max(0, Math.round(ms / 86400000));
 }
 
-module.exports = { json, fail, readBody, ROOM_CAPACITY, roomsFor, nightsBetween };
+// How many more men/women could still fit without opening a new room —
+// used to guard "add a guest to an existing booking" against overfilling.
+function emptyBedsByGender(guests) {
+  const male = guests.filter((g) => g.gender === 'M').length;
+  const female = guests.filter((g) => g.gender === 'F').length;
+  return {
+    maleEmpty: Math.ceil(male / ROOM_CAPACITY) * ROOM_CAPACITY - male,
+    femaleEmpty: Math.ceil(female / ROOM_CAPACITY) * ROOM_CAPACITY - female
+  };
+}
+
+module.exports = { json, fail, readBody, ROOM_CAPACITY, roomsFor, nightsBetween, emptyBedsByGender };

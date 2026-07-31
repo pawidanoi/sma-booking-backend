@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>แดชบอร์ดผู้บริหาร — ค่าใช้จ่ายที่พักภาคสนาม SMA</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{--ink:#2b1b12;--muted:#8c7256;--line:#f0dfba;--paper:#fff8ea;--surface:#fff;
+    --brand:#e0272a;--brand2:#b01f22;--brand-soft:#fbe6e3;
+    --gold:#ffc72c;--gold-soft:#fff3d1;
+    --success:#1f9d57;--success-soft:#e3f5e9;
+    --amber:#c98a00;--amber-soft:#fbf1d6;
+    --danger:#a61b3d;--danger-soft:#f7dee1;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);font-family:"Noto Sans Thai",system-ui,sans-serif;color:var(--ink)}
+  header{background:var(--brand);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:14px;border-bottom:3px solid var(--gold)}
+  header h1{font-size:16px;margin:0;font-weight:700;flex:1}
+  header .who{font-size:12px;opacity:.85}
+  header a{color:#fff;font-size:12px;font-weight:700;text-decoration:underline;cursor:pointer}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .kpi-label{font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .kpi-value{font-size:20px;font-weight:800}
+  .kpi-sub{font-size:10.5px;color:var(--muted);margin-top:4px}
+  .kpi.warn .kpi-value{color:var(--danger)}
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+  .charts .card{min-height:280px}
+  .charts .full{grid-column:1/-1}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .filters select,.filters input{font-family:inherit;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:13px;background:#fff}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;padding:8px;border-bottom:2px solid var(--line);cursor:pointer;white-space:nowrap;color:var(--muted);font-weight:700}
+  td{padding:8px;border-bottom:1px solid var(--line)}
+  tr:hover td{background:var(--brand-soft)}
+  .num{text-align:right}
+  .fix{color:var(--danger);font-weight:700}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:12px;font-size:13px}
+  .pager button{border:1.5px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer}
+  .pager button:disabled{opacity:.4;cursor:not-allowed}
+  .card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .card-head h3{margin:0;font-size:14px}
+  .xlbtn{font-size:11px;font-weight:700;color:var(--success);border:1.5px solid var(--success);border-radius:8px;padding:4px 10px;cursor:pointer;background:#fff;white-space:nowrap}
+  .xlbtn:hover{background:var(--success-soft)}
+  .loginbox{max-width:360px;margin:80px auto;text-align:center}
+  .loginbox input{width:100%;padding:12px;font-size:15px;border:1.5px solid var(--line);border-radius:12px;margin:12px 0}
+  .loginbox button{width:100%;padding:12px;font-size:15px;font-weight:700;background:var(--brand);color:#fff;border:0;border-radius:12px;cursor:pointer}
+  .err{color:var(--danger);font-size:13px;margin-top:8px}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100}
+  .modal{background:#fff;border-radius:14px;padding:20px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto}
+  .modal h3{margin:0 0 12px}
+  .modal .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .modal .close{text-align:right;color:var(--brand);font-weight:700;cursor:pointer;margin-top:12px}
+  .hint{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const API = '/api';
+const $ = s => document.querySelector(s);
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtMoney(v){ return "฿" + Math.round(v||0).toLocaleString("th-TH"); }
+
+let ME = null;
+let ALL_RECORDS = [];
+let LAST_SUMMARY = null;
+let FILTERS = { month:'', team:'', src:'', search:'' };
+let SORT = { key:'total_cost', dir:'desc' };
+let PAGE = 0;
+const PAGE_SIZE = 50;
+const CHARTS = {};
+
+async function apiGet(path){
+  const r = await fetch(API+path, { headers:{ 'Accept':'application/json' } });
+  const j = await r.json().catch(()=>({ error:'ระบบตอบกลับไม่ถูกรูปแบบ' }));
+  if(!r.ok) throw new Error(j.error || ('โหลดข้อมูลไม่สำเร็จ ('+r.status+')'));
+  return j;
+}
+
+function renderLogin(err){
+  $("#app").innerHTML = `<div class="loginbox">
+    <h2>แดชบอร์ดผู้บริหาร</h2>
+    <div class="hint">เข้าถึงได้เฉพาะผู้บริหาร/แอดมิน — ใส่รหัสพนักงานของคุณ</div>
+    <input id="code" placeholder="เช่น CMT2600940" onkeydown="if(event.key==='Enter')doLogin()"/>
+    ${err?`<div class="err">${esc(err)}</div>`:''}
+    <button onclick="doLogin()">เข้าดูแดชบอร์ด</button></div>`;
+  const el=$("#code"); if(el) el.focus();
+}
+
+async function doLogin(){
+  const code = (($("#code")||{}).value||'').trim();
+  if(!code){ renderLogin('กรุณาใส่รหัสพนักงาน'); return; }
+  try{
+    const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
+    ME = d.me;
+    sessionStorage.setItem('dash_actor', code);
+    await loadAndRender();
+  }catch(e){ renderLogin(e.message); }
+}
+
+async function loadAndRender(){
+  try{
+    const d = await apiGet('/dashboard-summary?actor='+encodeURIComponent(ME.code));
+    ALL_RECORDS = d.records || [];
+    renderDashboard(d);
+  }catch(e){
+    // 403 here specifically means the logged-in code isn't a dashboard viewer position —
+    // distinct from a network/loading failure, so send them back to the login gate.
+    sessionStorage.removeItem('dash_actor');
+    renderLogin(e.message);
+  }
+}
+
+function renderDashboard(d){
+  LAST_SUMMARY = d;
+  const months = [...new Set(ALL_RECORDS.map(r=>r.month_start))].sort();
+  const monthLabel = {}; ALL_RECORDS.forEach(r=>{ monthLabel[r.month_start]=r.month_label; });
+  const teams = [...new Set(ALL_RECORDS.map(r=>r.team_code).filter(Boolean))].sort();
+
+  $("#app").innerHTML = `
+    <header><h1>แดชบอร์ดผู้บริหาร — ค่าใช้จ่ายที่พักภาคสนาม SMA</h1>
+      <span class="who">${esc(ME.nickname||ME.name)} · ${esc(ME.position||'')}</span>
+      <a onclick="logout()">ออกจากระบบ</a></header>
+    <div class="wrap">
+      <div class="filters">
+        <select id="fMonth" onchange="onFilterChange()"><option value="">ทุกเดือน</option>${months.map(m=>`<option value="${m}">${esc(monthLabel[m])}</option>`).join("")}</select>
+        <select id="fTeam" onchange="onFilterChange()"><option value="">ทุกทีม</option>${teams.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("")}</select>
+        <select id="fSrc" onchange="onFilterChange()"><option value="">SMA + AREA</option><option value="SMA">SMA เท่านั้น</option><option value="AREA">AREA เท่านั้น</option></select>
+        <input id="fSearch" placeholder="ค้นหาสาขา/ที่พัก" oninput="onFilterChange()"/>
+      </div>
+      <div class="kpis" id="kpis"></div>
+      <div style="text-align:right;margin-bottom:10px"><button class="xlbtn" onclick="exportAllToExcel()">📥 Export ทั้งหมดเป็น Excel</button></div>
+      <div class="charts">
+        <div class="card"><div class="card-head"><h3>ค่าใช้จ่ายรายเดือน (แท่ง) + ค่าเตียงว่าง (เส้น)</h3><button class="xlbtn" onclick="exportChartToExcel('monthly')">📥 Excel</button></div><canvas id="chartMonthly"></canvas></div>
+        <div class="card"><div class="card-head"><h3>สัดส่วน SMA vs AREA</h3><button class="xlbtn" onclick="exportChartToExcel('src')">📥 Excel</button></div><canvas id="chartSrc"></canvas></div>
+        <div class="card"><div class="card-head"><h3>บาท/คน-คืน รายเดือน (ถ่วงน้ำหนักจริง)</h3><button class="xlbtn" onclick="exportChartToExcel('ppn')">📥 Excel</button></div><canvas id="chartPPN"></canvas></div>
+        <div class="card"><div class="card-head"><h3>ค่าใช้จ่ายตามทีม</h3><button class="xlbtn" onclick="exportChartToExcel('team')">📥 Excel</button></div><canvas id="chartTeam"></canvas></div>
+        <div class="card full"><div class="card-head"><h3>ที่พักค่าใช้จ่ายสูงสุด 10 อันดับ</h3><button class="xlbtn" onclick="exportChartToExcel('hotels')">📥 Excel</button></div><canvas id="chartHotels"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>ตารางรายละเอียด</h3><button class="xlbtn" onclick="exportTableToExcel()">📥 Export ตาราง (ตามตัวกรองปัจจุบัน)</button></div>
+        <table>
+          <thead><tr>
+            <th onclick="setSort('month_label')">เดือน</th><th onclick="setSort('team_code')">ทีม</th>
+            <th onclick="setSort('branch_name')">สาขา</th><th onclick="setSort('hotel_name')">ที่พัก</th>
+            <th class="num" onclick="setSort('nights')">คืน</th><th class="num" onclick="setSort('people')">คน</th>
+            <th class="num" onclick="setSort('empty_beds')">เตียงว่าง</th><th class="num" onclick="setSort('total_cost')">รวม (฿)</th>
+            <th class="num" onclick="setSort('empty_bed_cost')">ค่าเตียงว่าง (฿)</th><th>สถานะ</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div class="pager" id="pager"></div>
+      </div>
+    </div>
+    <div id="modalRoot"></div>`;
+
+  drawKpis(d.kpis);
+  drawCharts(d);
+  redrawTable();
+}
+
+function onFilterChange(){
+  FILTERS.month = $("#fMonth").value;
+  FILTERS.team = $("#fTeam").value;
+  FILTERS.src = $("#fSrc").value;
+  FILTERS.search = ($("#fSearch").value||'').toLowerCase();
+  PAGE = 0;
+  redrawTable();
+}
+
+function getFiltered(){
+  return ALL_RECORDS.filter(r=>{
+    if(FILTERS.month && r.month_start!==FILTERS.month) return false;
+    if(FILTERS.team && r.team_code!==FILTERS.team) return false;
+    if(FILTERS.src && r.src!==FILTERS.src) return false;
+    if(FILTERS.search){
+      const hay = ((r.branch_name||'')+' '+(r.hotel_name||'')).toLowerCase();
+      if(!hay.includes(FILTERS.search)) return false;
+    }
+    return true;
+  });
+}
+
+function setSort(key){
+  if(SORT.key===key) SORT.dir = SORT.dir==='asc'?'desc':'asc';
+  else { SORT.key=key; SORT.dir='desc'; }
+  redrawTable();
+}
+
+function redrawTable(){
+  const rows = getFiltered().slice().sort((a,b)=>{
+    const av=a[SORT.key], bv=b[SORT.key];
+    let cmp;
+    if(typeof av==='number' && typeof bv==='number') cmp = av-bv;
+    else cmp = String(av||'').localeCompare(String(bv||''));
+    return SORT.dir==='asc'?cmp:-cmp;
+  });
+  const totalPages = Math.max(1, Math.ceil(rows.length/PAGE_SIZE));
+  PAGE = Math.min(PAGE, totalPages-1);
+  const pageRows = rows.slice(PAGE*PAGE_SIZE, (PAGE+1)*PAGE_SIZE);
+
+  $("#tbody").innerHTML = pageRows.map(r=>`<tr onclick='openModal(${JSON.stringify(r.id)})'>
+    <td>${esc(r.month_label)}</td><td>${esc(r.team_code||'—')}</td>
+    <td>${esc(r.branch_name||'—')}</td><td>${esc(r.hotel_name||'—')}</td>
+    <td class="num">${r.nights||0}</td><td class="num">${r.people||0}</td>
+    <td class="num">${r.empty_beds||0}</td><td class="num">${fmtMoney(r.total_cost)}</td>
+    <td class="num">${fmtMoney(r.empty_bed_cost)}</td>
+    <td>${r.needs_manual_fix?'<span class="fix">ต้องแก้</span>':'ปกติ'}</td></tr>`).join("");
+
+  $("#pager").innerHTML = `<button ${PAGE===0?'disabled':''} onclick="PAGE--;redrawTable()">‹ ก่อนหน้า</button>
+    <span>หน้า ${PAGE+1}/${totalPages} · ${rows.length} รายการ</span>
+    <button ${PAGE>=totalPages-1?'disabled':''} onclick="PAGE++;redrawTable()">ถัดไป ›</button>`;
+}
+
+function openModal(id){
+  const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
+  $("#modalRoot").innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <h3>${esc(r.id)}</h3>
+      <div class="row"><span>เดือน</span><span>${esc(r.month_label)}</span></div>
+      <div class="row"><span>ทีม</span><span>${esc(r.team_code||'—')}</span></div>
+      <div class="row"><span>สาขา</span><span>${esc(r.branch_name||'—')}</span></div>
+      <div class="row"><span>ที่พัก</span><span>${esc(r.hotel_name||'—')}</span></div>
+      <div class="row"><span>ห้อง / คน / คืน</span><span>${r.rooms||0} / ${r.people||0} / ${r.nights||0}</span></div>
+      <div class="row"><span>เตียงว่าง</span><span>${r.empty_beds||0}</span></div>
+      <div class="row"><span>ค่าใช้จ่ายรวม</span><span>${fmtMoney(r.total_cost)}</span></div>
+      <div class="row"><span>บาท/คน-คืน</span><span>${fmtMoney(r.baht_per_person_night)}</span></div>
+      <div class="row"><span>ค่าเตียงว่าง</span><span>${fmtMoney(r.empty_bed_cost)}</span></div>
+      <div class="close" onclick="closeModal()">ปิด</div>
+    </div></div>`;
+}
+function closeModal(){ $("#modalRoot").innerHTML=''; }
+
+function drawKpis(k){
+  $("#kpis").innerHTML = `
+    <div class="kpi"><div class="kpi-label">ค่าใช้จ่ายรวม</div><div class="kpi-value">${fmtMoney(k.total_cost)}</div></div>
+    <div class="kpi warn"><div class="kpi-label">ค่าเตียงว่าง</div><div class="kpi-value">${fmtMoney(k.empty_bed_cost)}</div><div class="kpi-sub">${k.empty_bed_cost_pct}% ของยอดรวม</div></div>
+    <div class="kpi"><div class="kpi-label">จำนวนการจอง</div><div class="kpi-value">${k.booking_count.toLocaleString()}</div></div>
+    <div class="kpi"><div class="kpi-label">บาท/คน-คืน เฉลี่ย</div><div class="kpi-value">${fmtMoney(k.avg_baht_per_person_night)}</div><div class="kpi-sub">ถ่วงน้ำหนักตามคน-คืนจริง</div></div>
+    <div class="kpi"><div class="kpi-label">คน-คืนรวม</div><div class="kpi-value">${k.total_person_nights.toLocaleString()}</div></div>
+    <div class="kpi warn"><div class="kpi-label">ข้อมูลต้องแก้มือ (เก่า)</div><div class="kpi-value">${k.needs_fix_count_legacy}</div><div class="kpi-sub">รายการจากยุคก่อนระบบใหม่</div></div>`;
+}
+
+function destroyChart(key){ if(CHARTS[key]){ CHARTS[key].destroy(); delete CHARTS[key]; } }
+
+function drawCharts(d){
+  const COLORS = { brand:'#e0272a', gold:'#ffc72c', success:'#1f9d57', muted:'#8c7256', blue:'#1b5aa8', purple:'#6b3fa0' };
+
+  destroyChart('monthly');
+  CHARTS.monthly = new Chart($("#chartMonthly"), {
+    type:'bar',
+    data:{ labels:d.monthly_trend.map(m=>m.month_label),
+      datasets:[
+        { type:'bar', label:'ค่าใช้จ่าย', data:d.monthly_trend.map(m=>m.total_cost), backgroundColor:COLORS.brand, yAxisID:'y' },
+        { type:'line', label:'ค่าเตียงว่าง', data:d.monthly_trend.map(m=>ALL_RECORDS.filter(r=>r.month_start===m.month_start).reduce((a,r)=>a+(r.empty_bed_cost||0),0)), borderColor:COLORS.amber||'#c98a00', yAxisID:'y1', tension:.3 }
+      ]},
+    options:{ responsive:true, scales:{ y:{ position:'left' }, y1:{ position:'right', grid:{ drawOnChartArea:false } } } }
+  });
+
+  destroyChart('src');
+  CHARTS.src = new Chart($("#chartSrc"), {
+    type:'doughnut',
+    data:{ labels:['SMA','AREA'], datasets:[{ data:[d.src_split.SMA.total_cost, d.src_split.AREA.total_cost], backgroundColor:[COLORS.brand, COLORS.purple] }] }
+  });
+
+  destroyChart('ppn');
+  CHARTS.ppn = new Chart($("#chartPPN"), {
+    type:'line',
+    data:{ labels:d.cost_per_person_night_trend.map(m=>m.month_label), datasets:[{ label:'บาท/คน-คืน', data:d.cost_per_person_night_trend.map(m=>m.value), borderColor:COLORS.blue, backgroundColor:COLORS.blue+'20', fill:true, tension:.3 }] }
+  });
+
+  destroyChart('team');
+  const teamSorted = d.team_cost.slice(0,16);
+  CHARTS.team = new Chart($("#chartTeam"), {
+    type:'bar',
+    data:{ labels:teamSorted.map(t=>t.team_code), datasets:[{ label:'ค่าใช้จ่าย', data:teamSorted.map(t=>t.total_cost), backgroundColor:COLORS.success }] },
+    options:{ indexAxis:'y' }
+  });
+
+  destroyChart('hotels');
+  CHARTS.hotels = new Chart($("#chartHotels"), {
+    type:'bar',
+    data:{ labels:d.top_hotels.map(h=>h.hotel_name), datasets:[{ label:'ค่าใช้จ่าย', data:d.top_hotels.map(h=>h.total_cost), backgroundColor:COLORS.gold }] },
+    options:{ indexAxis:'y' }
+  });
+}
+
+/* ---------------- export to Excel (SheetJS, client-side, real .xlsx) ---------------- */
+function downloadWorkbook(wb, filename){
+  XLSX.writeFile(wb, filename);
+}
+function sheetFromRows(rows){
+  return XLSX.utils.json_to_sheet(rows);
+}
+function todayStamp(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+function exportChartToExcel(key){
+  if(!LAST_SUMMARY) return;
+  const d = LAST_SUMMARY;
+  let rows=[], name='';
+  if(key==='monthly'){
+    name='ค่าใช้จ่ายรายเดือน';
+    rows = d.monthly_trend.map(m=>({
+      'เดือน': m.month_label,
+      'ค่าใช้จ่ายรวม (บาท)': m.total_cost,
+      'คน-คืน': m.person_nights,
+      'ค่าเตียงว่าง (บาท)': ALL_RECORDS.filter(r=>r.month_start===m.month_start).reduce((a,r)=>a+(r.empty_bed_cost||0),0)
+    }));
+  } else if(key==='src'){
+    name='SMA vs AREA';
+    rows = [
+      { 'กลุ่ม':'SMA', 'ค่าใช้จ่ายรวม (บาท)': d.src_split.SMA.total_cost, 'จำนวนรายการ': d.src_split.SMA.count },
+      { 'กลุ่ม':'AREA', 'ค่าใช้จ่ายรวม (บาท)': d.src_split.AREA.total_cost, 'จำนวนรายการ': d.src_split.AREA.count }
+    ];
+  } else if(key==='ppn'){
+    name='บาทต่อคนคืน';
+    rows = d.cost_per_person_night_trend.map(m=>({ 'เดือน': m.month_label, 'บาท/คน-คืน': m.value }));
+  } else if(key==='team'){
+    name='ค่าใช้จ่ายตามทีม';
+    rows = d.team_cost.map(t=>({ 'ทีม': t.team_code, 'ค่าใช้จ่ายรวม (บาท)': t.total_cost }));
+  } else if(key==='hotels'){
+    name='ที่พักสูงสุด10';
+    rows = d.top_hotels.map(h=>({ 'ที่พัก': h.hotel_name, 'ค่าใช้จ่ายรวม (บาท)': h.total_cost }));
+  }
+  if(!rows.length){ alert('ไม่มีข้อมูลให้ export'); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(rows), name.slice(0,31));
+  downloadWorkbook(wb, `${name}-${todayStamp()}.xlsx`);
+}
+
+function exportTableToExcel(){
+  const rows = getFiltered().slice().sort((a,b)=>{
+    const av=a[SORT.key], bv=b[SORT.key];
+    let cmp;
+    if(typeof av==='number' && typeof bv==='number') cmp = av-bv;
+    else cmp = String(av||'').localeCompare(String(bv||''));
+    return SORT.dir==='asc'?cmp:-cmp;
+  }).map(r=>({
+    'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+    'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
+    'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
+    'บาท/คน-คืน': r.baht_per_person_night||0, 'สถานะ': r.needs_manual_fix?'ต้องแก้':'ปกติ'
+  }));
+  if(!rows.length){ alert('ไม่มีข้อมูลให้ export (ตามตัวกรองปัจจุบัน)'); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(rows), 'รายละเอียด');
+  downloadWorkbook(wb, `แดชบอร์ด-ตารางรายละเอียด-${todayStamp()}.xlsx`);
+}
+
+function exportAllToExcel(){
+  if(!LAST_SUMMARY) return;
+  const d = LAST_SUMMARY;
+  const wb = XLSX.utils.book_new();
+
+  const kpiRows = [
+    { 'ตัวชี้วัด':'ค่าใช้จ่ายรวม (บาท)', 'ค่า': d.kpis.total_cost },
+    { 'ตัวชี้วัด':'ค่าเตียงว่าง (บาท)', 'ค่า': d.kpis.empty_bed_cost },
+    { 'ตัวชี้วัด':'ค่าเตียงว่าง (% ของยอดรวม)', 'ค่า': d.kpis.empty_bed_cost_pct },
+    { 'ตัวชี้วัด':'จำนวนการจอง', 'ค่า': d.kpis.booking_count },
+    { 'ตัวชี้วัด':'บาท/คน-คืน เฉลี่ย (ถ่วงน้ำหนักจริง)', 'ค่า': d.kpis.avg_baht_per_person_night },
+    { 'ตัวชี้วัด':'คน-คืนรวม', 'ค่า': d.kpis.total_person_nights },
+    { 'ตัวชี้วัด':'ข้อมูลต้องแก้มือ (เก่า)', 'ค่า': d.kpis.needs_fix_count_legacy }
+  ];
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(kpiRows), 'สรุป KPI');
+
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(d.monthly_trend.map(m=>({
+    'เดือน': m.month_label, 'ค่าใช้จ่ายรวม (บาท)': m.total_cost, 'คน-คืน': m.person_nights
+  }))), 'รายเดือน');
+
+  XLSX.utils.book_append_sheet(wb, sheetFromRows([
+    { 'กลุ่ม':'SMA', 'ค่าใช้จ่ายรวม (บาท)': d.src_split.SMA.total_cost, 'จำนวนรายการ': d.src_split.SMA.count },
+    { 'กลุ่ม':'AREA', 'ค่าใช้จ่ายรวม (บาท)': d.src_split.AREA.total_cost, 'จำนวนรายการ': d.src_split.AREA.count }
+  ]), 'SMA vs AREA');
+
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(d.cost_per_person_night_trend.map(m=>({
+    'เดือน': m.month_label, 'บาท/คน-คืน': m.value
+  }))), 'บาทต่อคนคืน');
+
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(d.team_cost.map(t=>({
+    'ทีม': t.team_code, 'ค่าใช้จ่ายรวม (บาท)': t.total_cost
+  }))), 'ตามทีม');
+
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(d.top_hotels.map(h=>({
+    'ที่พัก': h.hotel_name, 'ค่าใช้จ่ายรวม (บาท)': h.total_cost
+  }))), 'ที่พักสูงสุด10');
+
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(ALL_RECORDS.map(r=>({
+    'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+    'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
+    'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
+    'บาท/คน-คืน': r.baht_per_person_night||0, 'สถานะ': r.needs_manual_fix?'ต้องแก้':'ปกติ'
+  }))), 'รายละเอียดทั้งหมด');
+
+  downloadWorkbook(wb, `แดชบอร์ดผู้บริหาร-${todayStamp()}.xlsx`);
+}
+
+function logout(){ sessionStorage.removeItem('dash_actor'); ME=null; renderLogin(); }
+
+(async function boot(){
+  const saved = sessionStorage.getItem('dash_actor');
+  if(saved){
+    try{
+      const d = await apiGet('/bootstrap?code='+encodeURIComponent(saved));
+      ME = d.me;
+      await loadAndRender();
+      return;
+    }catch(e){ sessionStorage.removeItem('dash_actor'); }
+  }
+  renderLogin();
+})();
+</script>
+</body>
+</html>
