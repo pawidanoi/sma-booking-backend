@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>ผูกบัญชี · น้องมะม่วง</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { --red:#e0272a; --gold:#ffc72c; --ink:#2b1b12; --paper:#fff8ea; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--paper); color:var(--ink); }
+  .bar { background:var(--red); color:#fff; padding:16px; font-weight:bold; text-align:center; }
+  .body { padding:20px; max-width:420px; margin:0 auto; }
+  .card { background:#fff; border-radius:14px; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  .label { font-size:13px; color:#8a7a68; margin-bottom:6px; }
+  input.txt { width:100%; padding:12px 14px; border:1px solid #e6d9c4; border-radius:10px; font-size:16px; }
+  .btn { width:100%; margin-top:14px; padding:13px; border:none; border-radius:10px; background:var(--red); color:#fff; font-size:16px; font-weight:bold; }
+  .btn:disabled { opacity:.5; }
+  .hint { font-size:12px; color:#8a7a68; margin-top:10px; }
+  .msg { text-align:center; padding:30px 10px; }
+  .msg .emoji { font-size:42px; }
+  .err { color:#c0392b; font-size:13px; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="bar">🥭 ผูกบัญชีกับน้องมะม่วง</div>
+<div class="body" id="app">
+  <div class="msg"><div class="emoji">🥭</div><div>กำลังเชื่อมต่อ...</div></div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+let LINE_USER_ID = null;
+
+async function boot() {
+  try {
+    const cfgRes = await fetch('/api/liff-config');
+    const cfg = await cfgRes.json();
+    if (!cfgRes.ok) throw new Error(cfg.error || 'โหลดค่าตั้งค่าไม่สำเร็จ');
+
+    await liff.init({ liffId: cfg.liffId });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+
+    const profile = await liff.getProfile();
+    LINE_USER_ID = profile.userId;
+    renderForm();
+  } catch (err) {
+    renderError('เชื่อมต่อ LINE ไม่สำเร็จ: ' + err.message);
+  }
+}
+
+function renderForm(err) {
+  $('#app').innerHTML = `
+    <div class="card">
+      <div class="label">รหัสพนักงานของคุณ</div>
+      <input class="txt" id="code" placeholder="เช่น CMT2400114" autocomplete="off" autocapitalize="characters"/>
+      ${err ? `<div class="err">${err}</div>` : ''}
+      <button class="btn" id="submitBtn">ผูกบัญชี</button>
+      <div class="hint">ใส่รหัสให้ตรงกับทะเบียนพนักงาน ผูกครั้งเดียวมะม่วงจะจำคุณได้ทุกครั้งที่แชท</div>
+    </div>`;
+  $('#code').focus();
+  $('#submitBtn').onclick = submit;
+  $('#code').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+}
+
+async function submit() {
+  const code = ($('#code').value || '').trim();
+  if (!code) return renderForm('กรุณาใส่รหัสพนักงาน');
+  const btn = $('#submitBtn');
+  btn.disabled = true; btn.textContent = 'กำลังผูกบัญชี...';
+  try {
+    const res = await fetch('/api/link-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, line_user_id: LINE_USER_ID })
+    });
+    const d = await res.json();
+    if (!res.ok) { renderForm(d.error || 'ผูกบัญชีไม่สำเร็จ'); return; }
+    renderSuccess(d.name);
+  } catch (err) {
+    renderForm('เชื่อมต่อไม่สำเร็จ ลองใหม่อีกครั้ง');
+  }
+}
+
+function renderSuccess(name) {
+  $('#app').innerHTML = `
+    <div class="msg">
+      <div class="emoji">🥭✅</div>
+      <div><b>ผูกบัญชีสำเร็จแล้วค่ะ คุณ${name}!</b></div>
+      <div class="hint">ปิดหน้านี้แล้วกลับไปแชทกับมะม่วงได้เลย</div>
+    </div>`;
+  setTimeout(() => { try { liff.closeWindow(); } catch (e) {} }, 1500);
+}
+
+function renderError(msg) {
+  $('#app').innerHTML = `<div class="msg"><div class="emoji">😵</div><div>${msg}</div></div>`;
+}
+
+boot();
+</script>
+</body>
+</html>
