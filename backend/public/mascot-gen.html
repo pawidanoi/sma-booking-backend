@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>mascot-gen</title></head>
+<body style="margin:0;background:#fff8ea">
+<canvas id="stage" width="320" height="320"></canvas>
+<canvas id="richmenu" width="2500" height="843" style="display:none"></canvas>
+<script>
+// Ported verbatim (pixel-art algorithm) from the น้องมะม่วง character-brief artifact,
+// just re-scaled for real export sizes (profile pic + LINE rich menu spec size).
+var PAL = {
+  '.': null,
+  'K':'#1f9d57', 'k':'#177a43',
+  'R':'#e0272a', 'r':'#b01f22',
+  'G':'#ffc72c',
+  'M':'#ffb100', 'L':'#ffd166', 'D':'#c97a00',
+  'B':'#ff6b4a',
+  'I':'#2b1b12', 'W':'#fff8ea',
+  'H':'#e0272a'
+};
+var GRID = 20;
+
+function emptyGrid(){
+  var g = [];
+  for (var y=0;y<GRID;y++){ g.push(new Array(GRID).fill('.')); }
+  return g;
+}
+function set(g,x,y,c){ if(y>=0&&y<GRID&&x>=0&&x<GRID) g[y][x]=c; }
+function circle(g,cx,cy,r,inner,outer){
+  for (var y=0;y<GRID;y++){
+    for (var x=0;x<GRID;x++){
+      var d = Math.sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy));
+      if (d<=r){ g[y][x] = (d>r-1.6) ? outer : inner; }
+    }
+  }
+}
+function baseMango(){
+  var g = emptyGrid();
+  var cx=10, cy=13, r=6.4;
+  circle(g, cx, cy, r, 'M', 'D');
+  for (var y=8;y<=10;y++){ for (var x=6;x<=8;x++){ if(g[y][x]==='M') g[y][x]='L'; } }
+  set(g,10,5,'K'); set(g,11,5,'k'); set(g,10,6,'K'); set(g,11,6,'K'); set(g,9,6,'k');
+  for (var y=7;y<=9;y++){
+    for (var x=4;x<=15;x++){
+      var d = Math.sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy));
+      if (d<=r-0.4 && y<=9){ g[y][x] = (y===9)?'G':'R'; }
+    }
+  }
+  set(g,4,9,'r'); set(g,15,9,'r');
+  set(g,7,13,'I'); set(g,8,13,'W'); set(g,12,13,'I'); set(g,13,13,'W');
+  set(g,5,15,'B'); set(g,15,15,'B');
+  set(g,8,16,'I'); set(g,9,17,'I'); set(g,10,17,'I'); set(g,11,16,'I');
+  return g;
+}
+function poseWave(){
+  var g = baseMango();
+  set(g,16,11,'D'); set(g,17,10,'D'); set(g,17,9,'H'); set(g,18,9,'H'); set(g,17,8,'H');
+  return g;
+}
+
+function drawTo(canvasId, gridFn, bgColor){
+  var canvas = document.getElementById(canvasId);
+  var ctx = canvas.getContext('2d');
+  if (bgColor) { ctx.fillStyle = bgColor; ctx.fillRect(0,0,canvas.width,canvas.height); }
+  var g = gridFn();
+  // center the 20x20 grid within the canvas, scaled to fill most of it
+  var cell = Math.min(canvas.width, canvas.height) / GRID * 0.92;
+  var offX = (canvas.width - cell*GRID) / 2;
+  var offY = (canvas.height - cell*GRID) / 2;
+  for (var y=0;y<GRID;y++){
+    for (var x=0;x<GRID;x++){
+      var c = g[y][x];
+      if (!c || c==='.') continue;
+      ctx.fillStyle = PAL[c] || '#000';
+      ctx.fillRect(offX + x*cell, offY + y*cell, cell+0.5, cell+0.5);
+    }
+  }
+}
+
+// Profile picture: waving pose, transparent-ish paper background, centered
+drawTo('stage', poseWave, '#fff8ea');
+window.__mascotReady = true;
+</script>
+</body></html>
