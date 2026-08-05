@@ -207,6 +207,7 @@ function normBooking(b){
     jobId:b.work_schedule_id, checkin:b.checkin_date, checkout:b.checkout_date,
     status:b.status, rejectReason:b.reject_reason, note:b.note||'',
     missionType:b.mission_type||null, missionNote:b.mission_type_note||null,
+    autoApproved:!!b.auto_approved, ruleViolations:b.rule_violations||[],
     submittedByCode:b.created_by_employee, adhoc: !b.work_schedule_id,
     src: b.team_code==='AREA' ? 'AREA' : 'SMA',
     hotels: choices,
@@ -750,12 +751,13 @@ function renderAdminQueue(){
     const src=b.src==='AREA'?`<span class="pill area">AREA</span>`:`<span class="pill ok">SMA</span>`;
     const adhoc=b.adhoc?`<span class="pill wait">จองเพิ่ม</span>`:'';
     const joinBadge=(b.joinRequests&&b.joinRequests.length)?`<span class="pill soon">ขอเข้าร่วม</span>`:'';
+    const autoBadge=b.autoApproved?`<span class="pill ok">✓ อัตโนมัติ</span>`:'';
     const d=b.derived||{};
     return `<div class="job" onclick="renderAdminDetail('${b.id}')">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
-      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
+      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${autoBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
   const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ').length;
   const flagged=BOOKINGS.filter(b=>b.change).length;
@@ -1006,7 +1008,10 @@ function renderPendingScheduleList(pending){
       <div class="d" style="background:${urgent?'var(--danger-soft)':'var(--amber-soft)'};color:${urgent?'var(--danger)':'var(--amber)'}">${daysUntil}<small>วัน</small></div>
       <div class="g"><div class="t">${esc(p.branch_name)}</div>
        <div class="s">${esc(p.team_code)} · ${fmtDate(p.date_start)}–${fmtDate(p.date_end)} · เข้าพักก่อน ${p.advance_days} วัน</div></div>
-      <button class="btn" style="width:auto;padding:8px 14px;margin:0" onclick="remindSchedule('${p.id}',this)">เตือนอีกครั้ง</button>
+      <div style="display:flex;flex-direction:column;gap:6px">
+       <button class="btn" style="width:auto;padding:8px 14px;margin:0" onclick="remindSchedule('${p.id}',this)">เตือนอีกครั้ง</button>
+       <button class="btn ghost" style="width:auto;padding:8px 14px;margin:0" onclick="deleteScheduleConfirm('${p.id}',this)">ลบแผนงาน</button>
+      </div>
      </div>`;
   }).join('');
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
@@ -1024,6 +1029,26 @@ async function remindSchedule(id,btn){
     toast(`ส่งเตือนแล้ว (${d.sent} คน)`);
     btn.textContent='เตือนแล้ว ✓';
   }catch(e){ toast(e.message); btn.disabled=false; btn.textContent='เตือนอีกครั้ง'; }
+}
+
+// Two-tap confirm instead of confirm() — blocking dialogs get flaky inside LINE's in-app browser.
+function deleteScheduleConfirm(id,btn){
+  if(btn.dataset.confirm==='1'){ deleteSchedule(id,btn); return; }
+  btn.dataset.confirm='1';
+  btn.textContent='กดอีกครั้งเพื่อยืนยันลบ';
+  btn.style.color='var(--danger)';
+  btn.style.borderColor='var(--danger)';
+}
+async function deleteSchedule(id,btn){
+  btn.disabled=true; btn.textContent='กำลังลบ...';
+  try{
+    const d=await apiSend('/schedule-delete','POST',{ work_schedule_id:id });
+    let msg='ลบแผนงานแล้ว';
+    if(d.deleted_bookings) msg+=` · ลบการจองที่ยังไม่เสร็จ ${d.deleted_bookings} รายการ`;
+    if(d.unlinked_bookings) msg+=` · ตัดการเชื่อมการจองที่เสร็จแล้ว ${d.unlinked_bookings} รายการ (ยังเก็บวอเชอร์ไว้)`;
+    toast(msg);
+    renderPendingSchedule();
+  }catch(e){ toast(e.message); btn.disabled=false; btn.dataset.confirm=''; btn.textContent='ลบแผนงาน'; btn.style.color=''; btn.style.borderColor=''; }
 }
 
 /* ================= เตียงว่าง (แอดมินเพิ่มคนเอง) ================= */
@@ -1220,6 +1245,9 @@ function renderAdminDetail(id){
     <button class="btn" onclick="approveJoin('${b.id}','${jr.id}')">อนุมัติ — เพิ่มเข้าห้อง</button>
     <button class="btn ghost" style="margin-top:8px" onclick="rejectJoin('${b.id}','${jr.id}')">ไม่อนุมัติ</button></div>`).join("");
   const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
+  const approvalBanner = b.autoApproved
+    ? `<div class="warn g">✓ ผ่านกฎอัตโนมัติ — ข้ามขั้นตรวจแล้ว</div>`
+    : (b.ruleViolations&&b.ruleViolations.length ? `<div class="warn a">⚠️ ไม่ผ่านอนุมัติอัตโนมัติ: ${b.ruleViolations.map(esc).join(' · ')}</div>` : '');
   const adminVoucherLink = b.voucher && (b.voucher.storagePath ? ('/api/voucher-redirect?booking_id='+encodeURIComponent(b.id)) : b.voucher.url);
   const voucherShown = b.status==='จองสำเร็จ' ? `<div class="card"><div class="label">วอเชอร์ที่ส่งแล้ว</div>
      <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc((b.voucher&&b.voucher.code)||'—')}</span></div>
@@ -1246,7 +1274,7 @@ function renderAdminDetail(id){
      <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
      ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
      ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
-    ${rejectBanner}${changeBox}${joinBox}
+    ${rejectBanner}${approvalBanner}${changeBox}${joinBox}
     <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
      <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
      <div class="roomgrid">${rc}</div></div>

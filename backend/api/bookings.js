@@ -3,6 +3,13 @@ const { json, fail, readBody, roomsFor, nightsBetween, emptyBedsByGender } = req
 const { getActor, isAdmin: checkIsAdmin } = require('../lib/auth');
 
 const MISSION_TYPES = ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'];
+const MAX_PRICE_PER_ROOM_NIGHT = 600;
+
+// booking_status_log — every status transition, from the first insert onward,
+// so admin time-saved can eventually be measured against a real "before".
+async function logStatus(bookingId, fromStatus, toStatus, changedBy) {
+  await supabase.from('booking_status_log').insert({ booking_id: bookingId, from_status: fromStatus, to_status: toStatus, changed_by: changedBy });
+}
 
 // bookings <-> booking_hotel_choices are joined BOTH ways (choices point at the booking,
 // and the booking points back at the one choice the admin picked), so the embed must name
@@ -13,7 +20,7 @@ const MISSION_TYPES = ['งานแฟร์', 'งานเปิดสาข�
 const BOOKING_SELECT = `
   id, team_code, branch_code, work_schedule_id, checkin_date, checkout_date, status,
   reject_reason, chosen_hotel_choice_id, confirmation_no, voucher_file_url, voucher_storage_path, note,
-  mission_type, mission_type_note,
+  mission_type, mission_type_note, auto_approved, rule_violations,
   created_by_employee, created_at, updated_at,
   branches ( name, province, lat, lng ),
   booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
@@ -159,6 +166,30 @@ async function createBooking(req, res, actor, body) {
   // Rule: warn when the same person is already booked on overlapping dates.
   const conflicts = await findGuestConflicts(guests, checkin_date, checkout_date);
 
+  // §8.5 item 2 — auto-approve straight to "ดำเนินการจอง" (skip the manual
+  // admin review gate) when every rule passes: no date-overlap conflict, every
+  // proposed hotel is already in the registry (not a custom entry awaiting
+  // admin confirmation), and none exceeds the per-room-night price ceiling.
+  // A booking with a spare bed (e.g. a lone traveller) is NOT treated as a
+  // violation — that's an inherent, unavoidable cost until cross-team room
+  // sharing (phase 2) exists, not something this admin review would fix.
+  const ruleViolations = [];
+  if (conflicts.length) ruleViolations.push(...conflicts);
+  const customChoice = hotel_choices.find((c) => !c.hotel_id);
+  if (customChoice) ruleViolations.push(`ที่พัก "${customChoice.custom_name || '(ไม่มีชื่อ)'}" เป็นที่พักนอกทะเบียน ต้องให้แอดมินยืนยันก่อน`);
+  const hotelIds = hotel_choices.map((c) => c.hotel_id).filter(Boolean);
+  const { data: hotelRows } = hotelIds.length ? await supabase.from('hotels').select('id, name, default_price_per_night').in('id', hotelIds) : { data: [] };
+  const hotelById = new Map((hotelRows || []).map((h) => [h.id, h]));
+  for (const c of hotel_choices) {
+    const price = c.hotel_id ? hotelById.get(c.hotel_id)?.default_price_per_night : c.custom_price;
+    if (price != null && Number(price) > MAX_PRICE_PER_ROOM_NIGHT) {
+      const name = c.hotel_id ? hotelById.get(c.hotel_id)?.name : c.custom_name;
+      ruleViolations.push(`ที่พัก "${name}" ราคา ${price}฿/ห้อง/คืน เกิน ${MAX_PRICE_PER_ROOM_NIGHT}฿`);
+    }
+  }
+  const autoApproved = ruleViolations.length === 0;
+  const initialStatus = autoApproved ? 'ดำเนินการจอง' : 'ส่งคำขอ';
+
   const id = await nextBookingId();
   const { error: insErr } = await supabase.from('bookings').insert({
     id,
@@ -167,13 +198,16 @@ async function createBooking(req, res, actor, body) {
     work_schedule_id: work_schedule_id || null,
     checkin_date,
     checkout_date,
-    status: 'ส่งคำขอ',
+    status: initialStatus,
     note: note || null,
     mission_type: work_schedule_id ? null : mission_type,
     mission_type_note: work_schedule_id ? null : (mission_type === 'อื่นๆ' ? (mission_type_note || null) : null),
+    auto_approved: autoApproved,
+    rule_violations: ruleViolations.length ? ruleViolations : null,
     created_by_employee: actor.code
   });
   if (insErr) return fail(res, 500, insErr.message);
+  await logStatus(id, null, initialStatus, actor.code);
 
   const guestRows = guests.map((g) => ({
     booking_id: id,
@@ -292,6 +326,7 @@ async function handlePatch(req, res, actor, isAdmin, body) {
   if (action === 'start_processing') {
     const { error } = await supabase.from('bookings').update({ status: 'ดำเนินการจอง', ...stamp }).eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'ดำเนินการจอง', actor.code);
     return await respondFresh(res, booking_id);
   }
 
@@ -323,6 +358,7 @@ async function handlePatch(req, res, actor, isAdmin, body) {
       })
       .eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'จองสำเร็จ', actor.code);
     return await respondFresh(res, booking_id);
   }
 
@@ -334,12 +370,14 @@ async function handlePatch(req, res, actor, isAdmin, body) {
       .update({ status: 'ต้องแก้ไข', reject_reason: String(reason).trim(), ...stamp })
       .eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'ต้องแก้ไข', actor.code);
     return await respondFresh(res, booking_id);
   }
 
   if (action === 'mark_problem') {
     const { error } = await supabase.from('bookings').update({ status: 'ติดปัญหา', ...stamp }).eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'ติดปัญหา', actor.code);
     return await respondFresh(res, booking_id);
   }
 
@@ -450,6 +488,7 @@ async function handlePatch(req, res, actor, isAdmin, body) {
       })
       .eq('id', booking_id);
     if (upErr) return fail(res, 500, upErr.message);
+    await logStatus(booking_id, bk.status, 'ส่งคำขอ', actor.code);
 
     await supabase.from('booking_guests').delete().eq('booking_id', booking_id);
     await supabase.from('booking_hotel_choices').delete().eq('booking_id', booking_id);
