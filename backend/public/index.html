@@ -901,7 +901,7 @@ function renderImportPreview(){
 
 async function confirmScheduleImport(){
   try{
-    const d=await apiSend('/schedule-import','POST',{ filename:IMPORT_FILENAME, rows:IMPORT_PREVIEW });
+    const d=await apiSend('/admin-import','POST',{ action:'schedule_import', filename:IMPORT_FILENAME, rows:IMPORT_PREVIEW });
     toast(`นำเข้าสำเร็จ ${d.inserted} แถว`+(d.skipped?` (ข้าม ${d.skipped} แถว)`:''));
     renderAdminQueue();
   }catch(e){ toast('นำเข้าไม่สำเร็จ: '+e.message); }
@@ -982,7 +982,7 @@ function renderBranchPreview(){
 
 async function confirmBranchImport(){
   try{
-    const d=await apiSend('/branch-import','POST',{ filename:BRANCH_IMPORT_FILENAME, rows:BRANCH_IMPORT_PREVIEW });
+    const d=await apiSend('/admin-import','POST',{ action:'branch_import', filename:BRANCH_IMPORT_FILENAME, rows:BRANCH_IMPORT_PREVIEW });
     toast(`นำเข้าสำเร็จ ${d.upserted} สาขา`+(d.skipped?` (ข้าม ${d.skipped})`:''));
     renderAdminQueue();
   }catch(e){ toast('นำเข้าไม่สำเร็จ: '+e.message); }
@@ -993,7 +993,7 @@ async function renderPendingSchedule(){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>แผนงานที่ยังไม่จอง</h1></div>
    <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
   try{
-    const d=await apiGet('/schedule-pending?actor='+encodeURIComponent(ME.code));
+    const d=await apiGet('/admin-import?action=schedule_pending&actor='+encodeURIComponent(ME.code));
     renderPendingScheduleList(d.pending||[]);
   }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
 }
@@ -1025,7 +1025,7 @@ function renderPendingScheduleList(pending){
 async function remindSchedule(id,btn){
   btn.disabled=true; btn.textContent='กำลังส่ง...';
   try{
-    const d=await apiSend('/schedule-remind','POST',{ work_schedule_id:id });
+    const d=await apiSend('/admin-import','POST',{ action:'schedule_remind', work_schedule_id:id });
     toast(`ส่งเตือนแล้ว (${d.sent} คน)`);
     btn.textContent='เตือนแล้ว ✓';
   }catch(e){ toast(e.message); btn.disabled=false; btn.textContent='เตือนอีกครั้ง'; }
@@ -1042,7 +1042,7 @@ function deleteScheduleConfirm(id,btn){
 async function deleteSchedule(id,btn){
   btn.disabled=true; btn.textContent='กำลังลบ...';
   try{
-    const d=await apiSend('/schedule-delete','POST',{ work_schedule_id:id });
+    const d=await apiSend('/admin-import','POST',{ action:'schedule_delete', work_schedule_id:id });
     let msg='ลบแผนงานแล้ว';
     if(d.deleted_bookings) msg+=` · ลบการจองที่ยังไม่เสร็จ ${d.deleted_bookings} รายการ`;
     if(d.unlinked_bookings) msg+=` · ตัดการเชื่อมการจองที่เสร็จแล้ว ${d.unlinked_bookings} รายการ (ยังเก็บวอเชอร์ไว้)`;
