@@ -764,7 +764,8 @@ function renderAdminQueue(){
     <span class="sub" style="cursor:pointer;text-decoration:underline" onclick="renderSpareBeds()">เตียงว่าง</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCheckedIn()">เข้าพักอยู่</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -801,10 +802,32 @@ function renderScheduleImport(){
     <div class="card">
      <div class="label">เลือกไฟล์ Excel แผนงาน (แท็บชื่อ "แผนงาน")</div>
      <input type="file" id="scheduleFile" accept=".xlsx,.xls" onchange="onScheduleFileChosen(event)"/>
-     <div class="hint" style="margin-top:8px">อ่านแค่คอลัมน์ รหัสสาขา / ทีม / วันที่เริ่มงาน / วันที่จบงาน — คอลัมน์อื่นในไฟล์ไม่ใช้ ไม่ต้องลบออกก่อนอัปโหลด</div>
+     <div class="hint" style="margin-top:8px">อ่านคอลัมน์ รหัสสาขา / ทีม / วันที่เริ่มงาน / วันที่จบงาน / ประเภทงาน — คอลัมน์อื่นในไฟล์ไม่ใช้ ไม่ต้องลบออกก่อนอัปโหลด<br/>ถ้าไฟล์มีแท็บอื่นที่มีคอลัมน์ "ประเภทงาน" คู่กับ "จองก่อนเข้าพัก" หรือ "เข้าพักก่อน" ระบบจะใช้แท็บนั้นเติม "เข้าพักก่อน(วัน)" ให้อัตโนมัติตามประเภทงานของแต่ละแถว</div>
     </div>
     <div id="importPreviewArea"></div>
    </div></div>`;
+}
+
+// Looks for any sheet other than "แผนงาน" that pairs a job-type column with an
+// advance-days column (header containing "จองก่อน" or "เข้าพักก่อน") — the exact
+// sheet name/wording varies between uploads, so match by header shape, not name.
+function findAdvanceDaysLookup(wb){
+  const map={};
+  for(const name of wb.SheetNames){
+    if(name==='แผนงาน') continue;
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{ defval:'' });
+    if(!rows.length) continue;
+    const keys=Object.keys(rows[0]);
+    const typeKey=keys.find(k=>k.includes('ประเภทงาน'));
+    const daysKey=keys.find(k=>k.includes('จองก่อน')||k.includes('เข้าพักก่อน'));
+    if(!typeKey||!daysKey) continue;
+    rows.forEach(r=>{
+      const type=String(r[typeKey]||'').trim();
+      const days=parseInt(r[daysKey],10);
+      if(type && Number.isInteger(days)) map[type]=days;
+    });
+  }
+  return map;
 }
 
 function onScheduleFileChosen(evt){
@@ -817,13 +840,20 @@ function onScheduleFileChosen(evt){
       const sheetName=wb.SheetNames.includes('แผนงาน')?'แผนงาน':wb.SheetNames[0];
       const ws=wb.Sheets[sheetName];
       const rows=XLSX.utils.sheet_to_json(ws,{ defval:'' });
-      IMPORT_PREVIEW=rows.map(r=>({
-        team_code:String(r['ทีม']||'').trim(),
-        branch_code:String(r['รหัสสาขา']||'').trim(),
-        date_start:toIsoDateFromExcel(r['วันที่เริ่มงาน']),
-        date_end:toIsoDateFromExcel(r['วันที่จบงาน']),
-        advance_days:0
-      })).filter(r=>r.team_code||r.branch_code||r.date_start||r.date_end);
+      const advanceDaysByType=findAdvanceDaysLookup(wb);
+      IMPORT_PREVIEW=rows.map(r=>{
+        const missionType=String(r['ประเภทงาน']||'').trim();
+        const looked=advanceDaysByType[missionType];
+        return {
+          team_code:String(r['ทีม']||'').trim(),
+          branch_code:String(r['รหัสสาขา']||'').trim(),
+          date_start:toIsoDateFromExcel(r['วันที่เริ่มงาน']),
+          date_end:toIsoDateFromExcel(r['วันที่จบงาน']),
+          mission_type:missionType,
+          advance_days:Number.isInteger(looked)?looked:0,
+          advance_days_matched:Number.isInteger(looked)
+        };
+      }).filter(r=>r.team_code||r.branch_code||r.date_start||r.date_end);
       IMPORT_FILENAME=file.name;
       renderImportPreview();
     }catch(err){ toast('อ่านไฟล์ไม่สำเร็จ: '+err.message); }
@@ -838,6 +868,7 @@ function toIsoDateFromExcel(v){
 
 function renderImportPreview(){
   const rows=IMPORT_PREVIEW;
+  const unmatchedTypes=rows.length && !rows.some(r=>r.advance_days_matched);
   const trs=rows.map((r,i)=>{
     const teamOk=TEAMS.includes(r.team_code);
     const branchOk=!!BRANCH_BY_CODE[r.branch_code];
@@ -848,15 +879,17 @@ function renderImportPreview(){
       <td>${esc(r.branch_code)}${branchOk?'':' ⚠️'}</td>
       <td>${esc(r.date_start)}</td>
       <td>${esc(r.date_end)}</td>
-      <td><input class="txt" style="width:60px;padding:6px" type="number" min="0" max="14" value="${r.advance_days}" onchange="IMPORT_PREVIEW[${i}].advance_days=parseInt(this.value)||0"/></td>
+      <td>${esc(r.mission_type)}</td>
+      <td><input class="txt" style="width:60px;padding:6px;${r.advance_days_matched?'':'border-color:var(--amber)'}" type="number" min="0" max="14" value="${r.advance_days}" onchange="IMPORT_PREVIEW[${i}].advance_days=parseInt(this.value)||0"/>${r.advance_days_matched?'':' <span title="ไม่พบประเภทงานนี้ในตารางเข้าพักก่อน — ตรวจ/แก้เอง">⚠️</span>'}</td>
     </tr>`;
   }).join('');
   $("#importPreviewArea").innerHTML=`
     <div class="card" style="margin-top:14px;overflow-x:auto">
      <div class="label">พบ ${rows.length} แถวในไฟล์ · ${esc(IMPORT_FILENAME)}</div>
      <div class="hint">แถวสีแดง = รหัสทีม/สาขาไม่ตรงทะเบียน หรือวันที่ไม่ครบ — จะถูกข้ามตอนนำเข้า (ตรวจซ้ำอีกทีฝั่งเซิร์ฟเวอร์)</div>
+     ${unmatchedTypes?'<div class="hint" style="color:var(--amber)">⚠️ ไม่พบแท็บ/คอลัมน์ตารางเข้าพักก่อนตามประเภทงานในไฟล์นี้ — เข้าพักก่อน(วัน) ตั้งเป็น 0 ทุกแถว แก้เองได้ในตาราง</div>':''}
      <table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse">
-      <thead><tr><th>ทีม</th><th>รหัสสาขา</th><th>วันเริ่ม</th><th>วันจบ</th><th>เข้าพักก่อน(วัน)</th></tr></thead>
+      <thead><tr><th>ทีม</th><th>รหัสสาขา</th><th>วันเริ่ม</th><th>วันจบ</th><th>ประเภทงาน</th><th>เข้าพักก่อน(วัน)</th></tr></thead>
       <tbody>${trs}</tbody>
      </table>
     </div>
@@ -867,6 +900,85 @@ async function confirmScheduleImport(){
   try{
     const d=await apiSend('/schedule-import','POST',{ filename:IMPORT_FILENAME, rows:IMPORT_PREVIEW });
     toast(`นำเข้าสำเร็จ ${d.inserted} แถว`+(d.skipped?` (ข้าม ${d.skipped} แถว)`:''));
+    renderAdminQueue();
+  }catch(e){ toast('นำเข้าไม่สำเร็จ: '+e.message); }
+}
+
+/* ================= นำเข้าสาขา (sync จากไฟล์ทะเบียนสาขาจริง) ================= */
+let BRANCH_IMPORT_PREVIEW=[], BRANCH_IMPORT_FILENAME='';
+function renderBranchImport(){
+  BRANCH_IMPORT_PREVIEW=[]; BRANCH_IMPORT_FILENAME='';
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>นำเข้าสาขา</h1></div>
+   <div class="body">
+    <div class="card">
+     <div class="label">เลือกไฟล์ Excel ทะเบียนสาขา (เช่น "สาขา.xlsx")</div>
+     <input type="file" id="branchFile" accept=".xlsx,.xls" onchange="onBranchFileChosen(event)"/>
+     <div class="hint" style="margin-top:8px">อ่านคอลัมน์ CJX Store Code / ชื่อสาขา / อำเภอ / จังหวัด / Google Maps (ดึงพิกัดจากลิงก์) — เพิ่มสาขาใหม่และอัปเดตสาขาเดิม ไม่ลบสาขาที่หายไปจากไฟล์</div>
+    </div>
+    <div id="branchPreviewArea"></div>
+   </div></div>`;
+}
+
+function parseLatLngFromMapsUrl(url){
+  const s=String(url||'');
+  let m=s.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if(!m) m=s.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  return m ? { lat:parseFloat(m[1]), lng:parseFloat(m[2]) } : { lat:null, lng:null };
+}
+
+function onBranchFileChosen(evt){
+  const file=evt.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try{
+      const wb=XLSX.read(e.target.result,{ type:'array' });
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{ defval:'' });
+      BRANCH_IMPORT_PREVIEW=rows.map(r=>{
+        const { lat, lng }=parseLatLngFromMapsUrl(r['Google Maps']);
+        return {
+          code:String(r['CJX Store Code']||'').trim(),
+          name:String(r['ชื่อสาขา']||'').trim(),
+          district:String(r['อำเภอ']||'').trim(),
+          province:String(r['จังหวัด']||'').trim(),
+          lat, lng,
+          status:String(r['Status']||'').trim()
+        };
+      }).filter(r=>r.code);
+      BRANCH_IMPORT_FILENAME=file.name;
+      renderBranchPreview();
+    }catch(err){ toast('อ่านไฟล์ไม่สำเร็จ: '+err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderBranchPreview(){
+  const rows=BRANCH_IMPORT_PREVIEW;
+  const trs=rows.map(r=>{
+    const bad=r.lat===null||r.lng===null||!r.name;
+    return `<tr style="${bad?'background:var(--danger-soft)':''}">
+      <td>${esc(r.code)}</td><td>${esc(r.name)}</td><td>${esc(r.district)}</td><td>${esc(r.province)}</td>
+      <td>${r.lat===null?'⚠️ ไม่มีพิกัด':r.lat.toFixed(5)+', '+r.lng.toFixed(5)}</td>
+      <td>${esc(r.status)}</td>
+    </tr>`;
+  }).join('');
+  $("#branchPreviewArea").innerHTML=`
+    <div class="card" style="margin-top:14px;overflow-x:auto">
+     <div class="label">พบ ${rows.length} สาขาในไฟล์ · ${esc(BRANCH_IMPORT_FILENAME)}</div>
+     <div class="hint">แถวสีแดง = ไม่มีชื่อหรือดึงพิกัดจากลิงก์ Google Maps ไม่ได้ — จะถูกข้ามตอนนำเข้า · คอลัมน์ Status แสดงไว้ให้ดูเฉยๆ ไม่ได้ใช้กรอง (นำเข้าทุกสถานะ เพราะสาขาที่ยังไม่เปิดก็อาจมีงานสำรวจพื้นที่/เปิดสาขาต้องจองที่พักได้)</div>
+     <table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse">
+      <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>อำเภอ</th><th>จังหวัด</th><th>พิกัด</th><th>Status</th></tr></thead>
+      <tbody>${trs}</tbody>
+     </table>
+    </div>
+    <button class="btn" style="margin-top:14px" onclick="confirmBranchImport()">ยืนยันนำเข้า ${rows.length} สาขา</button>`;
+}
+
+async function confirmBranchImport(){
+  try{
+    const d=await apiSend('/branch-import','POST',{ filename:BRANCH_IMPORT_FILENAME, rows:BRANCH_IMPORT_PREVIEW });
+    toast(`นำเข้าสำเร็จ ${d.upserted} สาขา`+(d.skipped?` (ข้าม ${d.skipped})`:''));
     renderAdminQueue();
   }catch(e){ toast('นำเข้าไม่สำเร็จ: '+e.message); }
 }
