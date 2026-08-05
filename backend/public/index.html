@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>ระบบจองที่พัก SMA</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{--ink:#2b1b12;--muted:#8c7256;--line:#f0dfba;--paper:#fff8ea;--surface:#fff;
     --brand:#e0272a;--brand2:#b01f22;--brand-soft:#fbe6e3;
@@ -762,7 +763,8 @@ function renderAdminQueue(){
     <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
     <span class="sub" style="cursor:pointer;text-decoration:underline" onclick="renderSpareBeds()">เตียงว่าง</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCheckedIn()">เข้าพักอยู่</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -789,6 +791,85 @@ function dismissChange(id,changeId){ adminAction(id,'dismiss_change',{ change_id
 function deleteBooking(id){ adminAction(id,'cancel_booking',null,'ยกเลิกการจองนี้แล้ว ✓',()=>{ setTimeout(renderAdminQueue,400); }); }
 function approveJoin(id,reqId){ adminAction(id,'accept_join_request',{ join_request_id:reqId },'อนุมัติแล้ว — เพิ่มเข้าห้องเรียบร้อย'); }
 function rejectJoin(id,reqId){ adminAction(id,'dismiss_join_request',{ join_request_id:reqId },'ไม่อนุมัติคำขอนี้'); }
+
+/* ================= นำเข้าแผนงาน (Excel upload, v2) ================= */
+let IMPORT_PREVIEW=[], IMPORT_FILENAME='';
+function renderScheduleImport(){
+  IMPORT_PREVIEW=[]; IMPORT_FILENAME='';
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>นำเข้าแผนงาน</h1></div>
+   <div class="body">
+    <div class="card">
+     <div class="label">เลือกไฟล์ Excel แผนงาน (แท็บชื่อ "แผนงาน")</div>
+     <input type="file" id="scheduleFile" accept=".xlsx,.xls" onchange="onScheduleFileChosen(event)"/>
+     <div class="hint" style="margin-top:8px">อ่านแค่คอลัมน์ รหัสสาขา / ทีม / วันที่เริ่มงาน / วันที่จบงาน — คอลัมน์อื่นในไฟล์ไม่ใช้ ไม่ต้องลบออกก่อนอัปโหลด</div>
+    </div>
+    <div id="importPreviewArea"></div>
+   </div></div>`;
+}
+
+function onScheduleFileChosen(evt){
+  const file=evt.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try{
+      const wb=XLSX.read(e.target.result,{ type:'array', cellDates:true });
+      const sheetName=wb.SheetNames.includes('แผนงาน')?'แผนงาน':wb.SheetNames[0];
+      const ws=wb.Sheets[sheetName];
+      const rows=XLSX.utils.sheet_to_json(ws,{ defval:'' });
+      IMPORT_PREVIEW=rows.map(r=>({
+        team_code:String(r['ทีม']||'').trim(),
+        branch_code:String(r['รหัสสาขา']||'').trim(),
+        date_start:toIsoDateFromExcel(r['วันที่เริ่มงาน']),
+        date_end:toIsoDateFromExcel(r['วันที่จบงาน']),
+        advance_days:0
+      })).filter(r=>r.team_code||r.branch_code||r.date_start||r.date_end);
+      IMPORT_FILENAME=file.name;
+      renderImportPreview();
+    }catch(err){ toast('อ่านไฟล์ไม่สำเร็จ: '+err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function toIsoDateFromExcel(v){
+  if(v instanceof Date) return v.getUTCFullYear()+'-'+String(v.getUTCMonth()+1).padStart(2,'0')+'-'+String(v.getUTCDate()).padStart(2,'0');
+  return '';
+}
+
+function renderImportPreview(){
+  const rows=IMPORT_PREVIEW;
+  const trs=rows.map((r,i)=>{
+    const teamOk=TEAMS.includes(r.team_code);
+    const branchOk=!!BRANCH_BY_CODE[r.branch_code];
+    const datesOk=r.date_start && r.date_end && r.date_end>r.date_start;
+    const bad=!teamOk||!branchOk||!datesOk;
+    return `<tr style="${bad?'background:var(--danger-soft)':''}">
+      <td>${esc(r.team_code)}${teamOk?'':' ⚠️'}</td>
+      <td>${esc(r.branch_code)}${branchOk?'':' ⚠️'}</td>
+      <td>${esc(r.date_start)}</td>
+      <td>${esc(r.date_end)}</td>
+      <td><input class="txt" style="width:60px;padding:6px" type="number" min="0" max="14" value="${r.advance_days}" onchange="IMPORT_PREVIEW[${i}].advance_days=parseInt(this.value)||0"/></td>
+    </tr>`;
+  }).join('');
+  $("#importPreviewArea").innerHTML=`
+    <div class="card" style="margin-top:14px;overflow-x:auto">
+     <div class="label">พบ ${rows.length} แถวในไฟล์ · ${esc(IMPORT_FILENAME)}</div>
+     <div class="hint">แถวสีแดง = รหัสทีม/สาขาไม่ตรงทะเบียน หรือวันที่ไม่ครบ — จะถูกข้ามตอนนำเข้า (ตรวจซ้ำอีกทีฝั่งเซิร์ฟเวอร์)</div>
+     <table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse">
+      <thead><tr><th>ทีม</th><th>รหัสสาขา</th><th>วันเริ่ม</th><th>วันจบ</th><th>เข้าพักก่อน(วัน)</th></tr></thead>
+      <tbody>${trs}</tbody>
+     </table>
+    </div>
+    <button class="btn" style="margin-top:14px" onclick="confirmScheduleImport()">ยืนยันนำเข้า ${rows.length} แถว</button>`;
+}
+
+async function confirmScheduleImport(){
+  try{
+    const d=await apiSend('/schedule-import','POST',{ filename:IMPORT_FILENAME, rows:IMPORT_PREVIEW });
+    toast(`นำเข้าสำเร็จ ${d.inserted} แถว`+(d.skipped?` (ข้าม ${d.skipped} แถว)`:''));
+    renderAdminQueue();
+  }catch(e){ toast('นำเข้าไม่สำเร็จ: '+e.message); }
+}
 
 /* ================= เตียงว่าง (แอดมินเพิ่มคนเอง) ================= */
 function renderSpareBeds(){
