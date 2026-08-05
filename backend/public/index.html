@@ -1353,7 +1353,7 @@ async function confirmVoucher(id){
 
 /* ================= เบิกคืนมัดจำ (พนักงาน) ================= */
 function openDepositClaim(bookingId){
-  DEP = { bookingId, amount:'', bankAccount:'', bankName:'', accountName:ME.name, note:'', busy:false };
+  DEP = { bookingId, amount:'', bankAccount:ME.bank_account_no||'', bankName:ME.bank_name||'', accountName:ME.bank_account_name||ME.name, note:'', busy:false };
   drawDepositClaim();
 }
 function drawDepositClaim(){

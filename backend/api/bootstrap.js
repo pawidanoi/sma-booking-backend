@@ -17,7 +17,7 @@ module.exports = async function handler(req, res) {
 
   const lookup = supabase
     .from('employees')
-    .select('code, name, nickname, team_code, gender, phone, position, receives_notify, active');
+    .select('code, name, nickname, team_code, gender, phone, position, receives_notify, active, bank_name, bank_account_no, bank_account_name');
   const { data: me, error: meErr } = await (code
     ? lookup.eq('code', code)
     : lookup.eq('line_user_id', lineUserId)
