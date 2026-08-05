@@ -765,7 +765,8 @@ function renderAdminQueue(){
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCheckedIn()">เข้าพักอยู่</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderPendingSchedule()">แผนงานที่ยังไม่จอง</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -983,6 +984,46 @@ async function confirmBranchImport(){
     toast(`นำเข้าสำเร็จ ${d.upserted} สาขา`+(d.skipped?` (ข้าม ${d.skipped})`:''));
     renderAdminQueue();
   }catch(e){ toast('นำเข้าไม่สำเร็จ: '+e.message); }
+}
+
+/* ================= แผนงานที่ยังไม่จอง (ทุกทีม) — v2 §3.4 ================= */
+async function renderPendingSchedule(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>แผนงานที่ยังไม่จอง</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/schedule-pending?actor='+encodeURIComponent(ME.code));
+    renderPendingScheduleList(d.pending||[]);
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+
+function renderPendingScheduleList(pending){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const rows=pending.map(p=>{
+    const target=new Date(p.target_date);
+    const daysUntil=Math.round((target-today)/86400000);
+    const urgent=daysUntil<=3;
+    return `<div class="job" style="${urgent?'background:var(--danger-soft)':''}">
+      <div class="d" style="background:${urgent?'var(--danger-soft)':'var(--amber-soft)'};color:${urgent?'var(--danger)':'var(--amber)'}">${daysUntil}<small>วัน</small></div>
+      <div class="g"><div class="t">${esc(p.branch_name)}</div>
+       <div class="s">${esc(p.team_code)} · ${fmtDate(p.date_start)}–${fmtDate(p.date_end)} · เข้าพักก่อน ${p.advance_days} วัน</div></div>
+      <button class="btn" style="width:auto;padding:8px 14px;margin:0" onclick="remindSchedule('${p.id}',this)">เตือนอีกครั้ง</button>
+     </div>`;
+  }).join('');
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+    <div style="flex:1"><h1>แผนงานที่ยังไม่จอง</h1><span class="sub">ทุกทีม · ${pending.length} รายการ</span></div></div>
+   <div class="body">
+    <div class="hint">เรียงจากใกล้ถึงกำหนดก่อน · แดง = เหลือ ≤3 วัน</div>
+    ${rows||'<div class="hint">ไม่มีแผนงานค้างจองแล้ว ✓</div>'}
+   </div></div>`;
+}
+
+async function remindSchedule(id,btn){
+  btn.disabled=true; btn.textContent='กำลังส่ง...';
+  try{
+    const d=await apiSend('/schedule-remind','POST',{ work_schedule_id:id });
+    toast(`ส่งเตือนแล้ว (${d.sent} คน)`);
+    btn.textContent='เตือนแล้ว ✓';
+  }catch(e){ toast(e.message); btn.disabled=false; btn.textContent='เตือนอีกครั้ง'; }
 }
 
 /* ================= เตียงว่าง (แอดมินเพิ่มคนเอง) ================= */
