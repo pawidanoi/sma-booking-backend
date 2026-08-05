@@ -429,6 +429,34 @@ function openFormEdit(id){
 }
 function bookingGuestList(id){ const b=findB(id); return (b && b.guestList) || []; }
 
+// v2 §8.5 item 3 — "จองเหมือนครั้งก่อน": real data shows the same team returns to
+// the same branch, same hotel, same people repeatedly. Copies guests + hotel
+// picks + note from the most recent completed booking at this branch; the
+// employee still has to pick fresh dates themselves.
+function findLastBookingForBranch(branchCode){
+  return BOOKINGS
+    .filter(b=>b.branchCode===branchCode && b.status==='จองสำเร็จ' && (b.guestList||[]).length)
+    .sort((a,b)=>new Date(b.checkin)-new Date(a.checkin))[0] || null;
+}
+function copyFromLastBooking(){
+  const last=findLastBookingForBranch(S.job.branchCode);
+  if(!last){ toast('ไม่พบการจองก่อนหน้าที่สาขานี้'); return; }
+  const stored=last.guestList||[];
+  const slots=[];
+  stored.filter(g=>g.g==='f').forEach((g,i)=>slots.push({ g:'f', idx:i, team:g.team||ME.team_code, code:g.code||'', name:g.name, phone:g.phone||'', manual:!g.code }));
+  stored.filter(g=>g.g==='m').forEach((g,i)=>slots.push({ g:'m', idx:i, team:g.team||ME.team_code, code:g.code||'', name:g.name, phone:g.phone||'', manual:!g.code }));
+  S.f=stored.filter(g=>g.g==='f').length;
+  S.m=stored.filter(g=>g.g==='m').length;
+  S.slots=slots;
+  S.hotelPicks=last.hotels.map(h=>{
+    if(h.custom) return { code:'CUSTOM-'+h.id, name:h.name, map:h.map, price:h.price, custom:true };
+    return HOTELS.find(x=>x.name===h.name) || { code:'REG-'+h.id, name:h.name, price:h.price, near:h.near };
+  });
+  S.note=last.note||'';
+  toast('คัดลอกผู้เข้าพัก+ที่พักจากครั้งก่อนแล้ว — ตรวจสอบก่อนส่งด้วยนะ');
+  rerender(renderForm);
+}
+
 function setManualProv(v){ S.manualProv=v; rerender(renderForm); }
 function setAdhocBranch(code){
   const b=BRANCH_BY_CODE[code]; if(!b) return;
@@ -495,12 +523,14 @@ function renderForm(){
      ${Object.keys(byProv).sort().map(p=>`<optgroup label="จ.${esc(p)}">${byProv[p].map(b=>`<option value="${esc(b.code)}">${esc(b.name)}</option>`).join("")}</optgroup>`).join("")}
     </select></div>` : '';
 
+  const lastBooking = (!S.editId && j.branchCode) ? findLastBookingForBranch(j.branchCode) : null;
+  const repeatBtn = lastBooking ? `<button class="btn ghost" style="margin-top:8px" onclick="copyFromLastBooking()">🔁 จองเหมือนครั้งก่อน (${fmtDate(lastBooking.checkin)})</button>` : '';
   const branchCard = j.adhoc
     ? (j.branchCode ? `<div class="card"><div class="label">สาขาที่จะไป</div>
         <div class="val" style="font-size:14px">${esc(j.branch)}${j.prov?(' · จ.'+esc(j.prov)):''}</div>
-        <div class="hint" style="margin-top:6px;cursor:pointer;color:var(--brand);font-weight:700" onclick="resetAdhocBranch()">เปลี่ยนสาขา</div></div>` : '')
+        <div class="hint" style="margin-top:6px;cursor:pointer;color:var(--brand);font-weight:700" onclick="resetAdhocBranch()">เปลี่ยนสาขา</div>${repeatBtn}</div>` : '')
     : `<div class="card"><div class="label">สาขาที่ต้องไป (จากแผนงาน)</div><div class="val" style="font-size:14px">${esc(j.branch)}</div>
-       ${j.start?`<div class="hint" style="margin:4px 0 0">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.adv?` · ควรเข้าก่อน ${j.adv} วัน`:''}</div>`:''}</div>`;
+       ${j.start?`<div class="hint" style="margin:4px 0 0">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.adv?` · ควรเข้าก่อน ${j.adv} วัน`:''}</div>`:''}${repeatBtn}</div>`;
 
   const missionCard = j.adhoc ? `<div class="card"><div class="label">ประเภทภารกิจ (จำเป็น)</div>
     <div class="chips">${MISSION_TYPES.map(t=>`<div class="chip ${S.missionType===t?'sel':''}" onclick="setMissionType('${esc(t)}')">${esc(t)}</div>`).join("")}</div>
