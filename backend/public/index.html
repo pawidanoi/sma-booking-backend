@@ -955,18 +955,20 @@ function onBranchFileChosen(evt){
 
 function renderBranchPreview(){
   const rows=BRANCH_IMPORT_PREVIEW;
+  const noCoords=rows.filter(r=>r.lat===null||r.lng===null).length;
   const trs=rows.map(r=>{
-    const bad=r.lat===null||r.lng===null||!r.name;
-    return `<tr style="${bad?'background:var(--danger-soft)':''}">
+    const bad=!r.name;
+    const noCoord=r.lat===null||r.lng===null;
+    return `<tr style="${bad?'background:var(--danger-soft)':noCoord?'background:var(--amber-soft)':''}">
       <td>${esc(r.code)}</td><td>${esc(r.name)}</td><td>${esc(r.district)}</td><td>${esc(r.province)}</td>
-      <td>${r.lat===null?'⚠️ ไม่มีพิกัด':r.lat.toFixed(5)+', '+r.lng.toFixed(5)}</td>
+      <td>${noCoord?'⚠️ ไม่มีพิกัด':r.lat.toFixed(5)+', '+r.lng.toFixed(5)}</td>
       <td>${esc(r.status)}</td>
     </tr>`;
   }).join('');
   $("#branchPreviewArea").innerHTML=`
     <div class="card" style="margin-top:14px;overflow-x:auto">
      <div class="label">พบ ${rows.length} สาขาในไฟล์ · ${esc(BRANCH_IMPORT_FILENAME)}</div>
-     <div class="hint">แถวสีแดง = ไม่มีชื่อหรือดึงพิกัดจากลิงก์ Google Maps ไม่ได้ — จะถูกข้ามตอนนำเข้า · คอลัมน์ Status แสดงไว้ให้ดูเฉยๆ ไม่ได้ใช้กรอง (นำเข้าทุกสถานะ เพราะสาขาที่ยังไม่เปิดก็อาจมีงานสำรวจพื้นที่/เปิดสาขาต้องจองที่พักได้)</div>
+     <div class="hint">แถวสีแดง = ไม่มีชื่อ จะถูกข้ามตอนนำเข้า · แถวสีเหลือง = ดึงพิกัดจากลิงก์ Google Maps ไม่ได้ (${noCoords} สาขา) ยังนำเข้ารหัส/ชื่อได้ปกติ แค่จะยังเรียงระยะทางหาที่พักใกล้สาขานี้ไม่ได้จนกว่าจะเติมพิกัดทีหลัง · คอลัมน์ Status แสดงไว้ให้ดูเฉยๆ ไม่ได้ใช้กรอง (นำเข้าทุกสถานะ เพราะสาขาที่ยังไม่เปิดก็อาจมีงานสำรวจพื้นที่/เปิดสาขาต้องจองที่พักได้)</div>
      <table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse">
       <thead><tr><th>รหัส</th><th>ชื่อสาขา</th><th>อำเภอ</th><th>จังหวัด</th><th>พิกัด</th><th>Status</th></tr></thead>
       <tbody>${trs}</tbody>

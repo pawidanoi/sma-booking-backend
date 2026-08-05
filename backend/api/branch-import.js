@@ -25,15 +25,25 @@ module.exports = async function handler(req, res) {
   rows.forEach((row, i) => {
     const code = String(row.code || '').trim();
     const name = String(row.name || '').trim();
-    const lat = Number(row.lat);
-    const lng = Number(row.lng);
+    // lat/lng are nullable — only needed later for hotel-distance sorting, not
+    // for matching this branch_code during schedule import — so a Maps link we
+    // couldn't parse (short goo.gl links, unusual formats) no longer blocks the
+    // whole branch from being registered.
+    const lat = row.lat === null || row.lat === undefined || row.lat === '' ? null : Number(row.lat);
+    const lng = row.lng === null || row.lng === undefined || row.lng === '' ? null : Number(row.lng);
     const reasons = [];
     if (!code) reasons.push('ไม่มีรหัสสาขา');
     if (!name) reasons.push('ไม่มีชื่อสาขา');
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) reasons.push('พิกัดไม่ถูกต้อง (ดึงจากลิงก์ Google Maps ไม่ได้)');
 
     if (reasons.length) { skipped.push({ row: i + 2, code, reasons }); return; }
-    valid.push({ code, name, district: row.district || null, province: row.province || null, lat, lng });
+    valid.push({
+      code,
+      name,
+      district: row.district || null,
+      province: row.province || null,
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null
+    });
   });
 
   let upserted = 0;
