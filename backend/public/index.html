@@ -143,6 +143,11 @@ function haversine(lat1,lng1,lat2,lng2){
   const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
+// Most branches in the registry were bulk-imported with lat/lng defaulted to
+// 0,0 (Null Island) rather than left blank — treat that the same as "no
+// coordinates yet" everywhere, or the distance features below compute a
+// meaningless ~11,000km trip to the Gulf of Guinea instead of skipping.
+function hasBranchCoords(j){ return j.blat!=null && j.blng!=null && j.blat!==0 && j.blng!==0; }
 // สรุป-requirement-แผนที่จองที่พัก.md §3 — fires right after a branch (with
 // coordinates) is picked, before the employee even sees the hotel list. Keyed
 // on branch+coords so it only re-fetches when the branch actually changes, not
@@ -150,7 +155,7 @@ function haversine(lat1,lng1,lat2,lng2){
 const HOME_DISTANCE_WARN_KM = 10;
 async function checkHomeDistanceIfNeeded(){
   const j = S.job;
-  if (!ME || ME.home_lat == null || ME.home_lng == null || j.blat == null || j.blng == null) {
+  if (!ME || ME.home_lat == null || ME.home_lng == null || !hasBranchCoords(j)) {
     S.homeCheck = null; S._homeCheckKey = null;
     return;
   }
@@ -585,7 +590,7 @@ function renderForm(){
   // the branch has none.
   const NEARBY_KM = 30;
   let list;
-  if (j.blat != null && j.blng != null) {
+  if (hasBranchCoords(j)) {
     list = HOTELS
       .map(h => Object.assign({}, h, { _km: haversine(j.blat, j.blng, h.lat, h.lng) }))
       .filter(h => h.prov === effProv || (h._km != null && h._km <= NEARBY_KM))
@@ -672,7 +677,7 @@ function renderForm(){
       <input class="txt" type="date" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
      ${S.checkin&&S.checkout&&!dateOk?`<div class="errtext">วันออกต้องหลังวันเข้าพัก</div>`:''}
      ${nights>0?`<div class="hint" style="margin:6px 0 0">${nights} คืน</div>`:''}</div>
-    ${effProv?`<div class="card"><div class="label">เลือกที่พัก ${j.blat!=null?`— จ.${esc(effProv)} หรือใกล้เคียงในระยะ 30 กม. (เรียงตามระยะทาง)`:`— ใน จ.${esc(effProv)} (เรียงตามราคา)`} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
+    ${effProv?`<div class="card"><div class="label">เลือกที่พัก ${hasBranchCoords(j)?`— จ.${esc(effProv)} หรือใกล้เคียงในระยะ 30 กม. (เรียงตามระยะทาง)`:`— ใน จ.${esc(effProv)} (เรียงตามราคา)`} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
      ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}</div>`:''}
     <div class="card"><div class="label">จำนวนผู้เข้าพัก (แยกเพศก่อน)</div>
      <div style="display:flex;gap:22px;align-items:center;margin-top:4px">

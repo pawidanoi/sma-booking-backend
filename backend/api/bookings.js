@@ -186,7 +186,12 @@ async function createBooking(req, res, actor, body) {
   // Recomputed server-side (not trusting a client-supplied distance) so the
   // warning can't be spoofed away. Silently skipped when either coordinate is
   // missing — matches the requirement doc's "ไม่มีข้อมูล ไม่ต้องบล็อกการขอที่พัก".
-  if (actor.home_lat != null && actor.home_lng != null && branchRow.lat != null && branchRow.lng != null) {
+  // Most branches were bulk-imported with lat/lng defaulted to 0,0 rather than
+  // left blank — treat that the same as "no coordinates yet" (see the matching
+  // hasBranchCoords() guard in index.html), or this computes a meaningless trip
+  // to Null Island instead of skipping the check.
+  const branchHasCoords = branchRow.lat != null && branchRow.lng != null && branchRow.lat !== 0 && branchRow.lng !== 0;
+  if (actor.home_lat != null && actor.home_lng != null && branchHasCoords) {
     const home = await drivingDistance(actor.home_lat, actor.home_lng, branchRow.lat, branchRow.lng);
     if (home && home.distance_km < HOME_DISTANCE_WARN_KM) {
       const reason = String(home_distance_reason || '').trim();
