@@ -7,6 +7,8 @@
 <title>ระบบจองที่พัก SMA</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <style>
   :root{--ink:#2b1b12;--muted:#8c7256;--line:#f0dfba;--paper:#fff8ea;--surface:#fff;
     --brand:#e0272a;--brand2:#b01f22;--brand-soft:#fbe6e3;
@@ -570,6 +572,16 @@ function renderForm(){
       <textarea class="txt" placeholder="เช่น ต้องอยู่เตรียมงานตั้งแต่เช้ามืด" oninput="setHomeCheckReason(this.value)">${esc(hc.reason||'')}</textarea>
     </div>` : '';
 
+  const showMap = hasBranchCoords(j) || (ME && ME.home_lat!=null) || S.hotelPicks.some(h=>h.lat!=null);
+  const mapCard = showMap ? `<div class="card" style="padding:10px">
+      <div class="label" style="margin-bottom:8px">แผนที่ตำแหน่ง</div>
+      <div id="bookingMap" style="height:220px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--muted)">
+        ${hasBranchCoords(j)?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--brand);margin-right:4px"></span>สาขา</span>`:''}
+        ${(ME&&ME.home_lat!=null)?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--ink);margin-right:4px"></span>บ้านคุณ</span>`:''}
+        ${S.hotelPicks.some(h=>h.lat!=null)?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);margin-right:4px"></span>ที่พักที่เลือก</span>`:''}
+      </div></div>` : '';
+
   const needProvPicker = !effProv && (!j.adhoc || j.branchCode);
   const provPicker = needProvPicker ? `<div class="card"><div class="label">⚠️ สาขานี้ยังไม่มีจังหวัดในทะเบียน — เลือกจังหวัดเอง</div>
     <select class="txt" onchange="setManualProv(this.value)">
@@ -709,7 +721,7 @@ function renderForm(){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span>
     <div style="flex:1"><h1>${S.editId?'แก้ไขคำขอ':(j.adhoc?'จองเพิ่ม':'ขอที่พัก')}</h1><span class="sub">${esc(j.branch||'เลือกสาขา')}</span></div></div>
    <div class="body">
-    ${branchCard}${branchPicker}${provPicker}${homeWarnCard}${missionCard}
+    ${branchCard}${branchPicker}${provPicker}${homeWarnCard}${mapCard}${missionCard}
     <div class="card"><div class="label">วันเข้าพัก – วันออก (เลือกเอง)</div>
      <div style="display:flex;gap:10px">
       <input class="txt" type="date" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
@@ -732,6 +744,39 @@ function renderForm(){
     ${ppl>0&&!namesOk?`<div class="warn d">⚠️ ยังมีผู้เข้าพักที่ไม่มีชื่อ — เลือกรหัสพนักงานหรือกรอกชื่อให้ครบก่อนส่ง</div>`:''}
     <button class="btn" ${ready?'':'disabled'} onclick="submitBooking()">${S.busy?'กำลังส่ง…':(S.editId?'ส่งคำขอที่แก้ไขแล้ว':'ส่งคำขอให้แอดมิน')}</button>
     <div class="hint" style="text-align:center">แอดมินจะตรวจ → จองบนชูวับ → ส่งวอเชอร์กลับ</div></div></div>`;
+  renderBookingMap();
+}
+
+function renderBookingMap(){
+  const el = document.getElementById('bookingMap');
+  if (window._bookingMap) { window._bookingMap.remove(); window._bookingMap = null; }
+  if (!el || typeof L === 'undefined') return;
+  const map = L.map(el, { zoomControl:false, attributionControl:true, scrollWheelZoom:false });
+  window._bookingMap = map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:18, attribution:'© OpenStreetMap'
+  }).addTo(map);
+
+  const pts = [];
+  function pin(lat, lng, label, color){
+    if (lat==null || lng==null || lat===0 || lng===0) return;
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+      iconSize:[24,24], iconAnchor:[12,12]
+    });
+    L.marker([lat,lng], {icon}).addTo(map);
+    pts.push([lat,lng]);
+  }
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const j = S.job;
+  if (hasBranchCoords(j)) pin(j.blat, j.blng, 'ส', cssVar('--brand'));
+  if (ME && ME.home_lat!=null) pin(ME.home_lat, ME.home_lng, 'บ', cssVar('--ink'));
+  S.hotelPicks.forEach(h => { if (h.lat!=null) pin(h.lat, h.lng, 'ท', cssVar('--amber')); });
+
+  if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });
+  else if (pts.length === 1) map.setView(pts[0], 14);
+  else map.setView([13.75,100.5], 6);
 }
 
 async function submitBooking(){
