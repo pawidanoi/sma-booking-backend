@@ -16,6 +16,7 @@
     --danger:#a61b3d;--danger-soft:#f7dee1;
     --male:#1b5aa8;--male-soft:#e2edf8;--female:#b23a72;--female-soft:#f8e3ee;}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
   body{margin:0;background:#f6e2ab;font-family:"Noto Sans Thai",system-ui,sans-serif;color:var(--ink);display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:18px 10px 40px}
   .rolebar{display:flex;align-items:center;gap:10px;background:#fff;border-radius:999px;padding:8px 18px;margin-bottom:16px;box-shadow:0 2px 10px rgba(0,0,0,.08);font-size:12.5px;font-weight:600;color:var(--muted)}
   .rolebar b{color:var(--ink)}
@@ -23,6 +24,16 @@
   .rolebar a{color:var(--brand);font-weight:700;cursor:pointer;text-decoration:none;margin-left:4px}
   .phone{width:390px;max-width:100%;height:800px;background:var(--paper);border-radius:38px;box-shadow:0 20px 50px rgba(0,0,0,.28);overflow:hidden;position:relative;border:10px solid #2a1810}
   .statusbar{height:34px;background:var(--brand);display:flex;align-items:center;justify-content:space-between;padding:0 22px;color:#fff;font-size:12px;font-weight:600}
+  /* On a real phone the decorative phone-frame illustration doesn't fit inside
+     the real viewport (measured: 800px frame vs ~714px of usable height after
+     the rolebar, on a 375x812 device) and forces double scrolling. Drop the
+     bezel/shadow/fake-statusbar chrome below ~430px so content uses the real
+     screen instead of a picture of one; keep the rolebar, it's real navigation. */
+  @media (max-width:430px){
+    body{padding:0}
+    .phone{width:100%;max-width:none;height:100vh;height:100dvh;border:0;border-radius:0;box-shadow:none}
+    .statusbar{display:none}
+  }
   .appbar{background:var(--brand);color:#fff;padding:6px 16px 14px;display:flex;align-items:center;gap:10px;border-bottom:3px solid var(--gold)}
   .appbar .back{font-size:20px;cursor:pointer;width:24px;opacity:.9}
   .appbar h1{font-size:16px;margin:0;font-weight:700;flex:1}
@@ -545,10 +556,15 @@ function renderForm(){
   checkHomeDistanceIfNeeded();
 
   const hc = S.homeCheck;
-  const homeWarnCard = (hc && !hc.loading && hc.km!=null && hc.km<HOME_DISTANCE_WARN_KM) ? `
-    <div class="card" style="background:#F7EEDC;border-color:#e6cd94">
-      <div class="label" style="color:#7a5c19">⚠ บ้านอยู่ใกล้สาขานี้มาก</div>
-      <div style="font-weight:600;font-size:13.5px">บ้านของคุณห่างจากสาขานี้แค่ <span class="num">${hc.km}</span> กม. (ขับรถจริง ~${hc.min} นาที)</div>
+  // Uses the app's own real --amber/--amber-soft tokens (same ones .warn.a
+  // already uses elsewhere) — an earlier pass of this card used hex values
+  // borrowed from an unrelated design doc that was never actually deployed.
+  const homeWarnCard = (hc && hc.loading) ? `
+    <div class="hint" style="margin:-2px 0 10px">กำลังตรวจสอบระยะทางจากบ้าน…</div>` :
+    (hc && hc.km!=null && hc.km<HOME_DISTANCE_WARN_KM) ? `
+    <div class="card" style="background:var(--amber-soft);border-color:var(--amber)">
+      <div class="label" style="color:#8a6200">⚠ บ้านอยู่ใกล้สาขานี้มาก</div>
+      <div style="font-weight:600;font-size:13.5px">บ้านของคุณห่างจากสาขานี้แค่ ${hc.km} กม. (ขับรถจริง ~${hc.min} นาที)</div>
       <div class="hint" style="margin-top:4px">ลองพิจารณากลับบ้านแทนการขอที่พักไหม — ถ้ายังจำเป็นต้องพัก กรุณาระบุเหตุผลไว้ด้วย</div>
       <div class="label" style="margin-top:10px">เหตุผลที่ยังต้องขอที่พัก</div>
       <textarea class="txt" placeholder="เช่น ต้องอยู่เตรียมงานตั้งแต่เช้ามืด" oninput="setHomeCheckReason(this.value)">${esc(hc.reason||'')}</textarea>
@@ -574,12 +590,14 @@ function renderForm(){
   const branchCard = j.adhoc
     ? (j.branchCode ? `<div class="card"><div class="label">สาขาที่จะไป</div>
         <div class="val" style="font-size:14px">${esc(j.branch)}${j.prov?(' · จ.'+esc(j.prov)):''}</div>
-        <div class="hint" style="margin-top:6px;cursor:pointer;color:var(--brand);font-weight:700" onclick="resetAdhocBranch()">เปลี่ยนสาขา</div>${repeatBtn}</div>` : '')
+        <div class="hint" style="margin-top:6px;cursor:pointer;color:var(--brand);font-weight:700" role="button" tabindex="0" onclick="resetAdhocBranch()" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();resetAdhocBranch()}">เปลี่ยนสาขา</div>${repeatBtn}</div>` : '')
     : `<div class="card"><div class="label">สาขาที่ต้องไป (จากแผนงาน)</div><div class="val" style="font-size:14px">${esc(j.branch)}</div>
        ${j.start?`<div class="hint" style="margin:4px 0 0">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.adv?` · ควรเข้าก่อน ${j.adv} วัน`:''}</div>`:''}${repeatBtn}</div>`;
 
   const missionCard = j.adhoc ? `<div class="card"><div class="label">ประเภทภารกิจ (จำเป็น)</div>
-    <div class="chips">${MISSION_TYPES.map(t=>`<div class="chip ${S.missionType===t?'sel':''}" onclick="setMissionType('${esc(t)}')">${esc(t)}</div>`).join("")}</div>
+    <div class="chips">${MISSION_TYPES.map(t=>`<div class="chip ${S.missionType===t?'sel':''}" role="radio" aria-checked="${S.missionType===t}" tabindex="0"
+      onclick="setMissionType('${esc(t)}')"
+      onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();setMissionType('${esc(t)}')}">${esc(t)}</div>`).join("")}</div>
     ${S.missionType==='อื่นๆ'?`<div class="label" style="margin-top:10px">ระบุประเภทภารกิจ</div>
       <input class="txt" placeholder="ระบุสั้นๆ" value="${esc(S.missionNote||'')}" oninput="S.missionNote=this.value"/>`:''}
     </div>` : '';
@@ -599,20 +617,41 @@ function renderForm(){
     list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
       .sort((a,b)=>(a.price==null?9999:a.price)-(b.price==null?9999:b.price));
   }
-  const hotelHtml=list.map(h=>{
+  const renderHotelRow = (h) => {
     const sel=S.hotelPicks.some(x=>x.code===h.code);
     const dist = h._km!=null ? `ห่าง ${h._km.toFixed(1)} กม.` : (h.near?('ใกล้ '+esc(h.near)):'');
     const provTag = h.prov && h.prov!==effProv ? ` · จ.${esc(h.prov)}` : '';
-    return `<div class="hotel ${sel?'sel':''}" onclick="toggleHotel('${esc(h.code)}')">
+    return `<div class="hotel ${sel?'sel':''}" role="checkbox" aria-checked="${sel}" tabindex="0"
+        onclick="toggleHotel('${esc(h.code)}')"
+        onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleHotel('${esc(h.code)}')}">
       <div class="chk">${sel?'✓':''}</div>
       <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''}</div></div>
       <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
-  }).join("");
+  };
+  // Grouped by distance so a 30+ item list isn't one undifferentiated scroll —
+  // near options (the ones that matter most) show immediately, farther ones
+  // are one tap away via a native <details> (free keyboard + screen-reader
+  // support, no extra JS). Only meaningful when we actually have distances;
+  // the province-only fallback list stays flat since it's price-sorted, not
+  // distance-sorted, and grouping by an absent number would be arbitrary.
+  let hotelHtml;
+  if (hasBranchCoords(j)) {
+    const near = list.filter(h => h._km==null || h._km<=10);
+    const far = list.filter(h => h._km!=null && h._km>10);
+    const nearHtml = near.map(renderHotelRow).join("");
+    const farHtml = far.length ? `<details ${near.length?'':'open'} style="margin-top:4px">
+        <summary class="hint" style="cursor:pointer;margin:0 0 9px;list-style:none">ที่พักไกลกว่า 10 กม. (${far.length} แห่ง) — แตะเพื่อดู</summary>
+        ${far.map(renderHotelRow).join("")}
+      </details>` : '';
+    hotelHtml = nearHtml + farHtml;
+  } else {
+    hotelHtml = list.map(renderHotelRow).join("");
+  }
 
   const customHtml=S.hotelPicks.filter(x=>x.custom).map(h=>`<div class="hotel sel">
     <div class="chk">✓</div>
     <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · `:''}ที่พักใหม่ (ไม่อยู่ในทะเบียน)</div></div>
-    <div class="p">${h.price}฿</div><span class="rmv" onclick="event.stopPropagation();removeHotelPick('${esc(h.code)}')">ลบ</span></div>`).join("");
+    <div class="p">${h.price}฿</div><span class="rmv" role="button" tabindex="0" onclick="event.stopPropagation();removeHotelPick('${esc(h.code)}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();event.stopPropagation();removeHotelPick('${esc(h.code)}')}">ลบ</span></div>`).join("");
 
   const addForm = S.addingHotel ? `
     <div class="card" style="margin-top:8px;padding:12px">
