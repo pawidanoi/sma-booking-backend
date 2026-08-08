@@ -579,13 +579,12 @@ function renderForm(){
     (hc && hc.km!=null) ? `
     <div class="hint" style="margin:-2px 0 10px">บ้านของคุณห่างจากสาขานี้ ${hc.km} กม. (ขับรถจริง ~${hc.min} นาที)</div>` : '';
 
-  const showMap = hasBranchCoords(j) || (ME && ME.home_lat!=null) || S.hotelPicks.some(h=>h.lat!=null);
+  const showMap = hasBranchCoords(j) || S.hotelPicks.some(h=>h.lat!=null);
   const mapCard = showMap ? `<div class="card" style="padding:10px">
       <div class="label" style="margin-bottom:8px">แผนที่ตำแหน่ง</div>
       <div id="bookingMap" style="height:220px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--muted)">
         ${hasBranchCoords(j)?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--brand);margin-right:4px"></span>สาขา</span>`:''}
-        ${(ME&&ME.home_lat!=null)?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--ink);margin-right:4px"></span>บ้านคุณ</span>`:''}
         ${S.hotelPicks.some(h=>h.lat!=null)?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);margin-right:4px"></span>ที่พักที่เลือก</span>`:''}
       </div></div>` : '';
 
@@ -694,6 +693,8 @@ function renderForm(){
       <option value="__manual__" ${s.manual?'selected':''}>อื่นๆ (ไม่มีในทะเบียน — กรอกเอง)</option>
      </select>
      ${s.manual?`
+      <div class="label" style="margin:8px 0 3px">รหัสพนักงาน (ถ้ามี)</div>
+      <input class="txt" placeholder="เช่น CMT2400114 — เว้นว่างได้ถ้าไม่มี" value="${esc(s.code||'')}" oninput="setSlotManualField(${i},'code',this.value)"/>
       <div class="label" style="margin:8px 0 3px">ชื่อจริง-นามสกุล</div>
       <input class="txt" placeholder="ชื่อ-สกุล" value="${esc(s.name||'')}" oninput="setSlotManualField(${i},'name',this.value)"/>
       <div class="label" style="margin:8px 0 3px">เบอร์โทร</div>
@@ -779,7 +780,6 @@ function renderBookingMap(){
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const j = S.job;
   if (hasBranchCoords(j)) pin(j.blat, j.blng, 'ส', cssVar('--brand'));
-  if (ME && ME.home_lat!=null) pin(ME.home_lat, ME.home_lng, 'บ', cssVar('--ink'));
   S.hotelPicks.forEach(h => { if (h.lat!=null) pin(h.lat, h.lng, 'ท', cssVar('--amber')); });
 
   if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });
