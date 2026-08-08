@@ -29,6 +29,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'schedule_delete') return scheduleDelete(res, body);
     if (body.action === 'employee_home_import') return employeeHomeImport(res, body);
     if (body.action === 'hotel_import') return hotelImport(res, body);
+    if (body.action === 'backfill_hotel_codes') return backfillHotelCodes(res);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -420,7 +421,13 @@ async function hotelImport(res, body) {
     if (!name || !Number.isFinite(price)) { skipped.push({ row: i + 1, reason: 'ไม่มีชื่อหรือราคา' }); return; }
     const lat = Number(row.lat), lng = Number(row.lng);
     const reviewScore = Number(row.review_score);
+    const choowapAddiId = row.choowap_addi_id ? String(row.choowap_addi_id) : null;
     valid.push({
+      // hotels.code is what the frontend's toggleHotel()/hotelIdByCode() key
+      // off of — the registry's existing rows use "H###", but Choowap's own
+      // addi_id is already unique per hotel, so prefixing it sidesteps any
+      // collision with those without needing to know the current max H###.
+      code: choowapAddiId ? `CW${choowapAddiId}` : null,
       name,
       province,
       district: row.district || null,
@@ -431,7 +438,7 @@ async function hotelImport(res, body) {
       default_price_per_night: price,
       review_score: Number.isFinite(reviewScore) ? reviewScore : null,
       review_url: row.review_url || null,
-      choowap_addi_id: row.choowap_addi_id ? String(row.choowap_addi_id) : null,
+      choowap_addi_id: choowapAddiId,
       source: 'choowap',
       is_custom: false,
       active: true
@@ -454,6 +461,33 @@ async function hotelImport(res, body) {
     skipped: skipped.length,
     skipped_detail: skipped
   });
+}
+
+// ---------------------------------------------------------------- backfill_hotel_codes
+// One-off repair: every one of today's 662 Choowap-imported hotels went in
+// with hotels.code left null (hotelImport() didn't set it at the time), which
+// made them completely unselectable in the booking form — toggleHotel(esc(h.code))
+// resolved to toggleHotel('') for all of them, indistinguishable from each
+// other. Fixed going forward in hotelImport(); this repairs the rows already
+// in the table using their choowap_addi_id, which is already unique per hotel.
+
+async function backfillHotelCodes(res) {
+  const { data: rows, error: selErr } = await supabase
+    .from('hotels')
+    .select('id, choowap_addi_id')
+    .is('code', null)
+    .not('choowap_addi_id', 'is', null);
+  if (selErr) return fail(res, 500, selErr.message);
+
+  let updated = 0;
+  const failed = [];
+  for (const r of rows || []) {
+    const { error } = await supabase.from('hotels').update({ code: `CW${r.choowap_addi_id}` }).eq('id', r.id);
+    if (error) failed.push({ id: r.id, reason: error.message });
+    else updated++;
+  }
+
+  return json(res, 200, { ok: true, updated, failed: failed.length, failed_detail: failed });
 }
 
 // ---------------------------------------------------------------- shared helpers
