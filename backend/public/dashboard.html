@@ -7,6 +7,11 @@
 <title>แดชบอร์ดผู้บริหาร — ค่าใช้จ่ายที่พักภาคสนาม SMA</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <style>
   :root{--ink:#2b1b12;--muted:#8c7256;--line:#f0dfba;--paper:#fff8ea;--surface:#fff;
     --brand:#e0272a;--brand2:#b01f22;--brand-soft:#fbe6e3;
@@ -74,6 +79,8 @@ let SORT = { key:'total_cost', dir:'desc' };
 let PAGE = 0;
 const PAGE_SIZE = 50;
 const CHARTS = {};
+let DASH_MAP = null, DASH_MAP_PINS = null, DASH_CLUSTER = null;
+let MAP_MODE = 'selected', SELECTED_RECORD_ID = null;
 
 async function apiGet(path){
   const r = await fetch(API+path, { headers:{ 'Accept':'application/json' } });
@@ -134,6 +141,12 @@ function renderDashboard(d){
         <input id="fSearch" placeholder="ค้นหาสาขา/ที่พัก" oninput="onFilterChange()"/>
       </div>
       <div class="kpis" id="kpis"></div>
+      <div class="card">
+        <div class="card-head"><h3>แผนที่ตำแหน่งการจอง</h3>
+          <button class="xlbtn" id="mapModeBtn" style="color:var(--amber);border-color:var(--gold);background:var(--gold-soft)" onclick="toggleMapMode()">ดูภาพรวมทั้งหมด</button></div>
+        <div id="dashMap" style="height:340px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
+        <div id="dashMapHint" class="hint" style="margin-top:8px">คลิกแถวในตารางด้านล่างเพื่อดูตำแหน่งบ้าน/ที่พัก/สาขาของ booking นั้น</div>
+      </div>
       <div style="text-align:right;margin-bottom:10px"><button class="xlbtn" onclick="exportAllToExcel()">📥 Export ทั้งหมดเป็น Excel</button></div>
       <div class="charts">
         <div class="card"><div class="card-head"><h3>ค่าใช้จ่ายรายเดือน (แท่ง) + ค่าเตียงว่าง (เส้น)</h3><button class="xlbtn" onclick="exportChartToExcel('monthly')">📥 Excel</button></div><canvas id="chartMonthly"></canvas></div>
@@ -162,6 +175,7 @@ function renderDashboard(d){
   drawKpis(d.kpis);
   drawCharts(d);
   redrawTable();
+  initDashMap();
 }
 
 function onFilterChange(){
@@ -171,6 +185,7 @@ function onFilterChange(){
   FILTERS.search = ($("#fSearch").value||'').toLowerCase();
   PAGE = 0;
   redrawTable();
+  if (MAP_MODE === 'overview') updateDashMapPins();
 }
 
 function getFiltered(){
@@ -204,7 +219,7 @@ function redrawTable(){
   PAGE = Math.min(PAGE, totalPages-1);
   const pageRows = rows.slice(PAGE*PAGE_SIZE, (PAGE+1)*PAGE_SIZE);
 
-  $("#tbody").innerHTML = pageRows.map(r=>`<tr onclick='openModal(${JSON.stringify(r.id)})'>
+  $("#tbody").innerHTML = pageRows.map(r=>`<tr onclick='onRowClick(${JSON.stringify(r.id)})'>
     <td>${esc(r.month_label)}</td><td>${esc(r.team_code||'—')}</td>
     <td>${esc(r.branch_name||'—')}</td><td>${esc(r.hotel_name||'—')}</td>
     <td class="num">${r.nights||0}</td><td class="num">${r.people||0}</td>
@@ -235,6 +250,103 @@ function openModal(id){
     </div></div>`;
 }
 function closeModal(){ $("#modalRoot").innerHTML=''; }
+
+function onRowClick(id){
+  openModal(id);
+  SELECTED_RECORD_ID = id;
+  if (MAP_MODE !== 'selected') { MAP_MODE = 'selected'; syncMapModeBtn(); }
+  updateDashMapPins();
+}
+
+function syncMapModeBtn(){
+  const btn = $("#mapModeBtn"); if (!btn) return;
+  btn.textContent = MAP_MODE==='selected' ? 'ดูภาพรวมทั้งหมด' : 'ดู booking ที่เลือก';
+}
+
+function toggleMapMode(){
+  MAP_MODE = MAP_MODE==='selected' ? 'overview' : 'selected';
+  syncMapModeBtn();
+  updateDashMapPins();
+}
+
+// Created once and reused — table filtering/sorting/paging redraw only #tbody,
+// so the map instance (and its tile layer) must survive those, not be rebuilt
+// on every interaction. Only the pins layer gets cleared and redrawn.
+function initDashMap(){
+  const el = document.getElementById('dashMap');
+  if (!el || typeof L === 'undefined' || DASH_MAP) { updateDashMapPins(); return; }
+  DASH_MAP = L.map(el, { zoomControl:true, attributionControl:true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:18, attribution:'© OpenStreetMap'
+  }).addTo(DASH_MAP);
+  DASH_MAP_PINS = L.layerGroup().addTo(DASH_MAP);
+  DASH_MAP.setView([13.75,100.5], 6);
+  updateDashMapPins();
+}
+
+function dashPinIcon(label, cssVarName){
+  const color = getComputedStyle(document.documentElement).getPropertyValue(cssVarName).trim();
+  return L.divIcon({
+    className:'',
+    html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+    iconSize:[24,24], iconAnchor:[12,12]
+  });
+}
+
+function updateDashMapPins(){
+  if (!DASH_MAP) return;
+  DASH_MAP_PINS.clearLayers();
+  if (DASH_CLUSTER) { DASH_MAP.removeLayer(DASH_CLUSTER); DASH_CLUSTER = null; }
+
+  if (MAP_MODE === 'selected') {
+    const hint = $("#dashMapHint");
+    const r = SELECTED_RECORD_ID ? ALL_RECORDS.find(x=>x.id===SELECTED_RECORD_ID) : null;
+    if (!r) {
+      if (hint) hint.textContent = 'คลิกแถวในตารางด้านล่างเพื่อดูตำแหน่งบ้าน/ที่พัก/สาขาของ booking นั้น';
+      DASH_MAP.setView([13.75,100.5], 6);
+      return;
+    }
+    const pts = [];
+    const add = (lat,lng,label,color) => {
+      if (lat==null||lng==null) return;
+      L.marker([lat,lng], { icon: dashPinIcon(label,color) }).addTo(DASH_MAP_PINS);
+      pts.push([lat,lng]);
+    };
+    add(r.branch_lat, r.branch_lng, 'ส', '--brand');
+    add(r.hotel_lat, r.hotel_lng, 'ท', '--amber');
+    add(r.home_lat, r.home_lng, 'บ', '--ink');
+    if (hint) hint.textContent = pts.length
+      ? `${esc(r.branch_name||'')} · ${esc(r.hotel_name||'ยังไม่เลือกที่พัก')}`
+      : 'booking นี้ยังไม่มีข้อมูลตำแหน่ง (ข้อมูลก่อนย้ายระบบ หรือยังไม่ผูกพิกัด)';
+    if (pts.length > 1) DASH_MAP.fitBounds(pts, { padding:[28,28] });
+    else if (pts.length === 1) DASH_MAP.setView(pts[0], 13);
+    else DASH_MAP.setView([13.75,100.5], 6);
+    return;
+  }
+
+  // Overview: every live (post-migration) record's branch + hotel pins, clustered —
+  // legacy records have no coordinates at all and are skipped, not shown as empty pins.
+  const hint = $("#dashMapHint");
+  if (hint) hint.textContent = 'ภาพรวมทุก booking ที่มีพิกัด — คลิกหมุดเพื่อดูรายละเอียด';
+  DASH_CLUSTER = L.markerClusterGroup();
+  const pts = [];
+  getFiltered().filter(r=>r.booking_id).forEach(r => {
+    if (r.branch_lat!=null && r.branch_lng!=null) {
+      const m = L.marker([r.branch_lat,r.branch_lng], { icon: dashPinIcon('ส','--brand') });
+      m.bindPopup(`<div style="font-size:12.5px"><strong>${esc(r.branch_name||'')}</strong><br>${esc(r.hotel_name||'')}<br><button class="xlbtn" style="margin-top:6px" onclick="openModal(${JSON.stringify(r.id)})">ดูรายละเอียด</button></div>`);
+      DASH_CLUSTER.addLayer(m); pts.push([r.branch_lat,r.branch_lng]);
+    }
+    if (r.hotel_lat!=null && r.hotel_lng!=null) {
+      const m = L.marker([r.hotel_lat,r.hotel_lng], { icon: dashPinIcon('ท','--amber') });
+      m.bindPopup(`<div style="font-size:12.5px"><strong>${esc(r.hotel_name||'')}</strong><br>${esc(r.branch_name||'')}<br><button class="xlbtn" style="margin-top:6px" onclick="openModal(${JSON.stringify(r.id)})">ดูรายละเอียด</button></div>`);
+      DASH_CLUSTER.addLayer(m); pts.push([r.hotel_lat,r.hotel_lng]);
+    }
+  });
+  DASH_MAP.addLayer(DASH_CLUSTER);
+  if (pts.length > 1) DASH_MAP.fitBounds(pts, { padding:[28,28] });
+  else if (pts.length === 1) DASH_MAP.setView(pts[0], 13);
+  else DASH_MAP.setView([13.75,100.5], 6);
+}
 
 function drawKpis(k){
   $("#kpis").innerHTML = `
@@ -402,7 +514,14 @@ function exportAllToExcel(){
   downloadWorkbook(wb, `แดชบอร์ดผู้บริหาร-${todayStamp()}.xlsx`);
 }
 
-function logout(){ sessionStorage.removeItem('dash_actor'); ME=null; renderLogin(); }
+function logout(){
+  sessionStorage.removeItem('dash_actor'); ME=null;
+  // renderLogin() wipes #app, taking the map's DOM container with it — drop the
+  // stale Leaflet instance too or the next login would draw onto a detached map.
+  if (DASH_MAP) { DASH_MAP.remove(); DASH_MAP=null; DASH_MAP_PINS=null; DASH_CLUSTER=null; }
+  MAP_MODE='selected'; SELECTED_RECORD_ID=null;
+  renderLogin();
+}
 
 (async function boot(){
   const saved = sessionStorage.getItem('dash_actor');

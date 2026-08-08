@@ -234,11 +234,16 @@ function normBooking(b){
   }));
   const choices = (b.booking_hotel_choices||[]).slice().sort((x,y)=>(x.rank||0)-(y.rank||0)).map(c=>({
     id:c.id,
+    code: c.hotels ? c.hotels.code : null,
     name: c.hotels ? c.hotels.name : c.custom_name,
     price: c.custom_price!=null ? Number(c.custom_price) : (c.hotels && c.hotels.default_price_per_night!=null ? Number(c.hotels.default_price_per_night) : null),
     near: c.hotels ? c.hotels.near_area : null,
     map: c.custom_map_link || '',
-    custom: !c.hotel_id
+    custom: !c.hotel_id,
+    lat: c.hotels && c.hotels.lat!=null ? Number(c.hotels.lat) : null,
+    lng: c.hotels && c.hotels.lng!=null ? Number(c.hotels.lng) : null,
+    prov: c.hotels ? c.hotels.province : null,
+    unavailable: !!c.unavailable_at
   }));
   const pending = (b.booking_changes||[]).filter(c=>c.status==='pending');
   const ch = pending.length ? pending[pending.length-1] : null;
@@ -780,6 +785,52 @@ function renderBookingMap(){
   else map.setView([13.75,100.5], 6);
 }
 
+// Admin exception-flow map (booking-prep screen): branch + every submitted hotel
+// choice (grey/struck-through if marked unavailable) + up to 3 suggested
+// alternatives as green pins with a one-tap "choose instead" popup.
+function renderAdminMap(b, suggestions){
+  const el = document.getElementById('adminMap');
+  if (window._adminMap) { window._adminMap.remove(); window._adminMap = null; }
+  if (!el || typeof L === 'undefined') return;
+  const map = L.map(el, { zoomControl:false, attributionControl:true, dragging:false,
+    scrollWheelZoom:false, touchZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false });
+  window._adminMap = map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:18, attribution:'© OpenStreetMap'
+  }).addTo(map);
+
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const pts = [];
+  function pin(lat, lng, label, color, opts){
+    if (lat==null || lng==null || lat===0 || lng===0) return;
+    const strike = opts && opts.strike ? 'text-decoration:line-through;' : '';
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);${strike}">${label}</div>`,
+      iconSize:[24,24], iconAnchor:[12,12]
+    });
+    const mk = L.marker([lat,lng], {icon});
+    if (opts && opts.popup) mk.bindPopup(opts.popup);
+    mk.addTo(map);
+    pts.push([lat,lng]);
+  }
+  if (hasBranchCoords(b)) pin(b.blat, b.blng, 'ส', cssVar('--brand'));
+  (b.hotels||[]).forEach(h => {
+    if (h.lat==null) return;
+    pin(h.lat, h.lng, 'ท', h.unavailable ? '#9a9a9a' : cssVar('--amber'), { strike: h.unavailable });
+  });
+  (suggestions||[]).forEach(h => {
+    if (h.lat==null) return;
+    const popup = `<div style="font-size:12.5px"><strong>${esc(h.name)}</strong><br>${h.price!=null?h.price+'฿':''}
+      <br><button class="btn" style="margin-top:6px;padding:6px 10px;font-size:12px" onclick="addHotelChoiceForBooking('${b.id}','${esc(h.code)}')">เลือกที่นี่แทน</button></div>`;
+    pin(h.lat, h.lng, '+', cssVar('--success'), { popup });
+  });
+
+  if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });
+  else if (pts.length === 1) map.setView(pts[0], 14);
+  else map.setView([13.75,100.5], 6);
+}
+
 async function submitBooking(){
   if(S.busy) return;
   const guests=collectGuests();
@@ -959,6 +1010,12 @@ async function adminAction(bookingId, action, extra, okMsg, after){
   }catch(e){ toast(e.message); }
 }
 function chooseHotel(id,choiceId){ adminAction(id,'choose_hotel',{ choice_id:choiceId },null); }
+function markHotelUnavailable(id,choiceId){ adminAction(id,'mark_hotel_unavailable',{ choice_id:choiceId },'บันทึกว่าที่พักนี้จองไม่ได้ — ดูที่พักที่แนะนำเพิ่มด้านล่าง'); }
+function addHotelChoiceForBooking(id,hotelCode){
+  const hotelId = hotelIdByCode(hotelCode);
+  if(!hotelId){ toast('ไม่พบที่พักนี้ในทะเบียน'); return; }
+  adminAction(id,'add_hotel_choice',{ hotel_id:hotelId },'เลือกที่พักนี้แทนแล้ว ✓');
+}
 function startProcessing(id){ adminAction(id,'start_processing',null,'เริ่มดำเนินการจองแล้ว'); }
 function markProblem(id){ adminAction(id,'mark_problem',null,'บันทึกว่าติดปัญหา — แจ้งพนักงานหาที่ใหม่'); }
 function acceptChange(id,changeId){ adminAction(id,'accept_change',{ change_id:changeId },'รับเรื่องแล้ว — ปรับการจองเรียบร้อย'); }
@@ -1387,6 +1444,25 @@ function renderAdminDetail(id){
   const nights=daysBetween(b.checkin,b.checkout)||1;
   const chosen=b.hotels.find(h=>h.id===b.chosenChoiceId)||null;
   const cost=chosen?(chosen.price||0)*rooms.length*nights:0;
+  const hasBCoords = hasBranchCoords(b);
+  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, {
+    _km: (hasBCoords && h.lat!=null) ? haversine(b.blat,b.blng,h.lat,h.lng) : null
+  }));
+  const anyUnavailable = hotelsWithDist.some(h=>h.unavailable);
+  // Only surface once something's actually unavailable — the admin asked for
+  // alternatives, not a second opinion on choices that are still fine.
+  const NEARBY_KM = 30;
+  const usedCodes = new Set(b.hotels.filter(h=>h.code).map(h=>h.code));
+  const suggestions = (anyUnavailable && hasBCoords)
+    ? HOTELS.filter(h => !usedCodes.has(h.code))
+        .map(h => Object.assign({}, h, { _km: haversine(b.blat,b.blng,h.lat,h.lng) }))
+        .filter(h => h.prov===b.prov || (h._km!=null && h._km<=NEARBY_KM))
+        .sort((x,y)=>(x._km==null?9999:x._km)-(y._km==null?9999:y._km))
+        .slice(0,3)
+    : [];
+  const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
+    : h.custom ? (h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · ที่พักใหม่`:'ที่พักใหม่')
+    : esc(h.near||'-');
   const rc=rooms.map((r,k)=>{
     const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
     const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
@@ -1398,10 +1474,34 @@ function renderAdminDetail(id){
     <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.name||'')}')">คัดลอก</span></div>
     <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.phone||'')}')">คัดลอก</span></div>
    </div>`).join("");
-  const hotelRadios=b.hotels.map(h=>`<div class="hotel radio ${b.chosenChoiceId===h.id?'sel':''}" onclick="chooseHotel('${b.id}','${h.id}')">
+  const hotelRadios=hotelsWithDist.map(h=>{
+    const provTag = h.prov && h.prov!==b.prov ? ` · จ.${esc(h.prov)}` : '';
+    if (h.unavailable) return `<div class="hotel radio" style="opacity:.55">
+      <div class="chk"></div>
+      <div class="n"><div class="t" style="text-decoration:line-through">${esc(h.name)}</div><div class="s">จองไม่ได้ (เต็ม)${provTag}</div></div>
+      <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
+    return `<div class="hotel radio ${b.chosenChoiceId===h.id?'sel':''}" onclick="chooseHotel('${b.id}','${h.id}')">
     <div class="chk">${b.chosenChoiceId===h.id?'✓':''}</div>
-    <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h.custom?(h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · ที่พักใหม่`:'ที่พักใหม่'):esc(h.near||'-')}</div></div>
-    <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`).join("");
+    <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${hotelSubtitle(h)}${provTag}</div></div>
+    <div class="p">${h.price!=null?h.price+'฿':'—'}</div>
+    <span class="rmv" role="button" tabindex="0" onclick="event.stopPropagation();markHotelUnavailable('${b.id}','${h.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();event.stopPropagation();markHotelUnavailable('${b.id}','${h.id}')}">จองไม่ได้ (เต็ม)</span></div>`;
+  }).join("");
+  const altCard = suggestions.length ? `<div class="card" style="border-color:var(--success)">
+    <div class="label" style="color:var(--success)">ที่พักที่แนะนำเพิ่ม — ใกล้สาขา จองแทนได้</div>
+    ${suggestions.map(h=>`<div class="hotel" style="border-color:var(--success);margin-bottom:6px">
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h._km!=null?`ห่างจากสาขา ${h._km.toFixed(1)} กม.`:''}${h.prov&&h.prov!==b.prov?` · จ.${esc(h.prov)}`:''}</div></div>
+      <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>
+      <button class="btn ghost" style="margin:-2px 0 10px" onclick="addHotelChoiceForBooking('${b.id}','${esc(h.code)}')">เลือกที่นี่แทน</button>`).join("")}
+    </div>` : '';
+  const mapCard = (hasBCoords || hotelsWithDist.some(h=>h.lat!=null) || suggestions.length) ? `<div class="card" style="padding:10px">
+    <div class="label" style="margin-bottom:8px">แผนที่ตำแหน่ง</div>
+    <div id="adminMap" style="height:220px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--muted)">
+      ${hasBCoords?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--brand);margin-right:4px"></span>สาขา</span>`:''}
+      <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);margin-right:4px"></span>ที่พักที่เลือกไว้</span>
+      ${anyUnavailable?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#9a9a9a;margin-right:4px"></span>จองไม่ได้</span>`:''}
+      ${suggestions.length?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--success);margin-right:4px"></span>แนะนำเพิ่ม</span>`:''}
+    </div></div>` : '';
   const changeBox = !b.change ? '' : (b.change.type==='ยกเลิกการจอง'
     ? `<div class="card" style="border-color:var(--danger)"><div class="label" style="color:var(--danger)">⚠️ พนักงานขอยกเลิกการจองนี้</div>
         <div style="font-size:13.5px;font-weight:600;margin-bottom:6px">${b.change.note?('เหตุผล: '+esc(b.change.note)):'ไม่ระบุเหตุผล'}</div>
@@ -1452,10 +1552,13 @@ function renderAdminDetail(id){
     <div class="card"><div class="label">รหัส · ชื่อ · เบอร์ (ก็อปไปจองบนชูวับ)</div>
      ${guestRows}
      <div class="addnew" onclick="copyTxt(${JSON.stringify(copyAll)})">คัดลอกรายชื่อทั้งหมด</div></div>
+    ${mapCard}
     <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้ — เลือกอันที่จองได้จริง</div>${hotelRadios}
      ${chosen?`<div class="hint" style="margin-top:8px">ประมาณการรวม ~${cost.toLocaleString()}฿ (${nights} คืน × ${rooms.length} ห้อง)</div>`:'<div class="hint">ยังไม่ได้เลือกที่พักที่จะจอง</div>'}</div>
+    ${altCard}
     ${voucherShown}
     ${actions}</div></div>`;
+  renderAdminMap(b, suggestions);
 }
 
 function copyTxt(t){

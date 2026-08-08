@@ -30,7 +30,7 @@ const BOOKING_SELECT = `
   mission_type, mission_type_note, auto_approved, rule_violations,
   created_by_employee, created_at, updated_at,
   branches ( name, province, lat, lng ),
-  booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
+  booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, unavailable_at, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
   booking_guests ( id, team_code, employee_code, name, phone, gender ),
   booking_changes ( id, type, new_rooms, new_checkin, new_checkout, note, status, created_at ),
   booking_join_requests ( id, requested_by_employee, guest_name, guest_gender, guest_phone, guest_employee_code, guest_team_code, status, decided_by_employee, decided_at, created_at )
@@ -344,7 +344,7 @@ async function handlePatch(req, res, actor, isAdmin, body) {
   const { data: bk } = await supabase.from('bookings').select('id, status').eq('id', booking_id).maybeSingle();
   if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
 
-  const adminOnly = ['start_processing', 'choose_hotel', 'attach_voucher', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'cancel_booking', 'add_guest_admin', 'accept_join_request', 'dismiss_join_request'];
+  const adminOnly = ['start_processing', 'choose_hotel', 'attach_voucher', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'cancel_booking', 'add_guest_admin', 'accept_join_request', 'dismiss_join_request', 'mark_hotel_unavailable', 'add_hotel_choice'];
   if (adminOnly.includes(action) && !isAdmin) return fail(res, 403, 'เฉพาะแอดมินเท่านั้น');
 
   const stamp = { updated_at: new Date().toISOString() };
@@ -361,6 +361,42 @@ async function handlePatch(req, res, actor, isAdmin, body) {
     if (!choice_id) return fail(res, 400, 'ไม่ได้เลือกที่พัก');
     const { error } = await supabase.from('bookings').update({ chosen_hotel_choice_id: choice_id, ...stamp }).eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
+    return await respondFresh(res, booking_id);
+  }
+
+  // Admin exception flow (map screen): a submitted hotel choice turned out to be full.
+  // Kept in the row (not deleted) so its pin still shows grey on the map for history;
+  // if it was the currently chosen one, that pick is cleared rather than left dangling.
+  if (action === 'mark_hotel_unavailable') {
+    const { choice_id } = body;
+    if (!choice_id) return fail(res, 400, 'ไม่ได้ระบุที่พัก');
+    const { error } = await supabase
+      .from('booking_hotel_choices')
+      .update({ unavailable_at: new Date().toISOString() })
+      .eq('id', choice_id).eq('booking_id', booking_id);
+    if (error) return fail(res, 500, error.message);
+    const { data: bkNow } = await supabase.from('bookings').select('chosen_hotel_choice_id').eq('id', booking_id).maybeSingle();
+    if (bkNow && bkNow.chosen_hotel_choice_id === choice_id) {
+      await supabase.from('bookings').update({ chosen_hotel_choice_id: null, ...stamp }).eq('id', booking_id);
+    }
+    return await respondFresh(res, booking_id);
+  }
+
+  // Admin picks one of the map's suggested alternatives to replace an unavailable
+  // choice — adds it as a new choice row and makes it the chosen one immediately,
+  // since the admin already decided on the map, not just shortlisted it.
+  if (action === 'add_hotel_choice') {
+    const { hotel_id } = body;
+    if (!hotel_id) return fail(res, 400, 'ไม่ได้ระบุที่พัก');
+    const { data: existing } = await supabase
+      .from('booking_hotel_choices').select('rank').eq('booking_id', booking_id)
+      .order('rank', { ascending: false }).limit(1);
+    const nextRank = (existing && existing[0] && existing[0].rank ? existing[0].rank : 0) + 1;
+    const { data: inserted, error } = await supabase
+      .from('booking_hotel_choices').insert({ booking_id, hotel_id, rank: nextRank })
+      .select('id').single();
+    if (error) return fail(res, 500, error.message);
+    await supabase.from('bookings').update({ chosen_hotel_choice_id: inserted.id, ...stamp }).eq('id', booking_id);
     return await respondFresh(res, booking_id);
   }
 

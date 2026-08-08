@@ -42,7 +42,16 @@ module.exports = async function handler(req, res) {
     if (legacyErr) return fail(res, 500, legacyErr.message);
     if (liveErr) return fail(res, 500, liveErr.message);
 
-    const liveRecords = (liveRowsRaw || []).map(toLiveRecord);
+    // Map screen (dashboard, "booking นี้" pins): the one home location shown per
+    // booking is the requester's — same convention the home-distance-rule already
+    // uses in bookings.js, not an attempt to average every guest's address.
+    const requesterCodes = [...new Set((liveRowsRaw || []).map((r) => r.created_by_employee).filter(Boolean))];
+    const { data: empRows } = requesterCodes.length
+      ? await supabase.from('employees').select('code, home_lat, home_lng').in('code', requesterCodes)
+      : { data: [] };
+    const homeByCode = new Map((empRows || []).map((e) => [e.code, e]));
+
+    const liveRecords = (liveRowsRaw || []).map((row) => toLiveRecord(row, homeByCode));
     const legacyRecords = (legacyRows || []).map(toLegacyRecord);
     const records = [...legacyRecords, ...liveRecords].sort((a, b) => (a.month_start < b.month_start ? -1 : 1));
 
@@ -96,11 +105,12 @@ function toLegacyRecord(r) {
     baht_per_person_night: Number(r.baht_per_person_night) || 0,
     empty_bed_cost: Number(r.empty_bed_cost) || 0,
     needs_manual_fix: !!r.needs_manual_fix,
-    booking_id: null
+    booking_id: null,
+    branch_lat: null, branch_lng: null, hotel_lat: null, hotel_lng: null, home_lat: null, home_lng: null
   };
 }
 
-function toLiveRecord(row) {
+function toLiveRecord(row, homeByCode) {
   const b = decorate(row);
   const monthStart = (b.checkin_date || '').slice(0, 7) + '-01';
   const chosen = (b.booking_hotel_choices || []).find((c) => c.id === b.chosen_hotel_choice_id) || null;
@@ -109,6 +119,8 @@ function toLiveRecord(row) {
   // definition the legacy dataset uses (verified against its embedded sample rows).
   const emptyBedCost = (pricePerRoomNight / 2) * b.derived.empty_beds * b.derived.nights;
   const personNights = b.derived.people * b.derived.nights;
+  const home = homeByCode ? homeByCode.get(b.created_by_employee) : null;
+  const numOrNull = (v) => (v == null ? null : Number(v));
   return {
     id: b.id,
     month_label: monthLabelFromDate(b.checkin_date),
@@ -126,7 +138,13 @@ function toLiveRecord(row) {
     baht_per_person_night: personNights > 0 ? b.derived.est_total / personNights : 0,
     empty_bed_cost: emptyBedCost,
     needs_manual_fix: false,
-    booking_id: b.id
+    booking_id: b.id,
+    branch_lat: numOrNull(b.branches && b.branches.lat),
+    branch_lng: numOrNull(b.branches && b.branches.lng),
+    hotel_lat: numOrNull(chosen && chosen.hotels && chosen.hotels.lat),
+    hotel_lng: numOrNull(chosen && chosen.hotels && chosen.hotels.lng),
+    home_lat: numOrNull(home && home.home_lat),
+    home_lng: numOrNull(home && home.home_lng)
   };
 }
 
