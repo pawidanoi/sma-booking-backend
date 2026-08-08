@@ -143,6 +143,36 @@ function haversine(lat1,lng1,lat2,lng2){
   const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
+// สรุป-requirement-แผนที่จองที่พัก.md §3 — fires right after a branch (with
+// coordinates) is picked, before the employee even sees the hotel list. Keyed
+// on branch+coords so it only re-fetches when the branch actually changes, not
+// on every rerender(renderForm) call the rest of the form triggers.
+const HOME_DISTANCE_WARN_KM = 10;
+async function checkHomeDistanceIfNeeded(){
+  const j = S.job;
+  if (!ME || ME.home_lat == null || ME.home_lng == null || j.blat == null || j.blng == null) {
+    S.homeCheck = null; S._homeCheckKey = null;
+    return;
+  }
+  const key = j.branchCode + '|' + j.blat + ',' + j.blng;
+  if (S._homeCheckKey === key) return;
+  S._homeCheckKey = key;
+  S.homeCheck = { loading: true, km: null, min: null, reason: (S.homeCheck && S.homeCheck.reason) || '' };
+  try {
+    const r = await apiGet(`/directions?actor=${encodeURIComponent(ME.code)}&from_lat=${ME.home_lat}&from_lng=${ME.home_lng}&to_lat=${j.blat}&to_lng=${j.blng}`);
+    if (S._homeCheckKey === key) {
+      S.homeCheck = Object.assign({}, S.homeCheck, { loading: false, km: r.distance_km, min: r.duration_min });
+      rerender(renderForm);
+    }
+  } catch (e) {
+    if (S._homeCheckKey === key) {
+      S.homeCheck = Object.assign({}, S.homeCheck, { loading: false, km: null, min: null });
+      rerender(renderForm);
+    }
+  }
+}
+function setHomeCheckReason(v){ if(S.homeCheck) S.homeCheck.reason = v; }
+
 function tickClock(){
   const el=$("#clock"); if(!el) return;
   const d=new Date(); el.textContent = String(d.getHours()).padStart(2,'0')+":"+String(d.getMinutes()).padStart(2,'0');
@@ -507,6 +537,17 @@ function renderForm(){
   const j=S.job;
   const effProv = S.manualProv || j.prov;
   rebuildSlots();
+  checkHomeDistanceIfNeeded();
+
+  const hc = S.homeCheck;
+  const homeWarnCard = (hc && !hc.loading && hc.km!=null && hc.km<HOME_DISTANCE_WARN_KM) ? `
+    <div class="card" style="background:#F7EEDC;border-color:#e6cd94">
+      <div class="label" style="color:#7a5c19">⚠ บ้านอยู่ใกล้สาขานี้มาก</div>
+      <div style="font-weight:600;font-size:13.5px">บ้านของคุณห่างจากสาขานี้แค่ <span class="num">${hc.km}</span> กม. (ขับรถจริง ~${hc.min} นาที)</div>
+      <div class="hint" style="margin-top:4px">ลองพิจารณากลับบ้านแทนการขอที่พักไหม — ถ้ายังจำเป็นต้องพัก กรุณาระบุเหตุผลไว้ด้วย</div>
+      <div class="label" style="margin-top:10px">เหตุผลที่ยังต้องขอที่พัก</div>
+      <textarea class="txt" placeholder="เช่น ต้องอยู่เตรียมงานตั้งแต่เช้ามืด" oninput="setHomeCheckReason(this.value)">${esc(hc.reason||'')}</textarea>
+    </div>` : '';
 
   const needProvPicker = !effProv && (!j.adhoc || j.branchCode);
   const provPicker = needProvPicker ? `<div class="card"><div class="label">⚠️ สาขานี้ยังไม่มีจังหวัดในทะเบียน — เลือกจังหวัดเอง</div>
@@ -624,7 +665,7 @@ function renderForm(){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span>
     <div style="flex:1"><h1>${S.editId?'แก้ไขคำขอ':(j.adhoc?'จองเพิ่ม':'ขอที่พัก')}</h1><span class="sub">${esc(j.branch||'เลือกสาขา')}</span></div></div>
    <div class="body">
-    ${branchCard}${branchPicker}${provPicker}${missionCard}
+    ${branchCard}${branchPicker}${provPicker}${homeWarnCard}${missionCard}
     <div class="card"><div class="label">วันเข้าพัก – วันออก (เลือกเอง)</div>
      <div style="display:flex;gap:10px">
       <input class="txt" type="date" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
@@ -660,6 +701,7 @@ async function submitBooking(){
     note: S.note||'',
     mission_type: S.job.adhoc ? (S.missionType||null) : null,
     mission_type_note: S.job.adhoc && S.missionType==='อื่นๆ' ? (S.missionNote||null) : null,
+    home_distance_reason: (S.homeCheck && S.homeCheck.reason) || null,
     guests: guests.map(g=>({
       team_code: g.team, employee_code: g.code||null,
       name: g.name, phone: g.phone||null, gender: g.g==='f' ? 'F' : 'M'

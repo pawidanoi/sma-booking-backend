@@ -1,16 +1,18 @@
 const { getActor } = require('../lib/auth');
 const { json, fail } = require('../lib/http');
+const { drivingDistance } = require('../lib/directions');
 
 // GET /api/directions?actor=CODE&from_lat=..&from_lng=..&to_lat=..&to_lng=..
 //
-// Server-side proxy to OpenRouteService (free tier, no card needed — chosen over
-// Google Directions for that reason) so ORS_API_KEY never reaches the browser,
-// same reasoning as SUPABASE_SERVICE_ROLE_KEY staying server-only. Backs the map
-// feature's home-distance-rule (สรุป-requirement-แผนที่จองที่พัก.md §3: <10km from
-// home to branch warns the employee to go home instead of booking) and any
-// screen that shows real driving distance/time between two points. Any logged-in
-// employee can call this — not admin-gated, since the rule fires in the
-// employee's own booking form before an admin is ever involved.
+// Employee-facing check — backs the map feature's home-distance-rule
+// (สรุป-requirement-แผนที่จองที่พัก.md §3: <10km from home to branch warns the
+// employee to go home instead of booking) shown right after branch selection,
+// and any screen that shows real driving distance/time between two points. Any
+// logged-in employee can call this — not admin-gated, since the rule fires in
+// the employee's own booking form before an admin is ever involved. The
+// authoritative recheck at booking creation lives in bookings.js, which calls
+// the same lib/directions.js helper server-side rather than trusting this
+// endpoint's response back from the client.
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return fail(res, 405, 'method not allowed');
 
@@ -25,25 +27,8 @@ module.exports = async function handler(req, res) {
     return fail(res, 400, 'พิกัดไม่ครบหรือไม่ถูกต้อง');
   }
 
-  const apiKey = process.env.ORS_API_KEY;
-  if (!apiKey) return fail(res, 500, 'ยังไม่ได้ตั้งค่า ORS_API_KEY ใน Vercel');
+  const result = await drivingDistance(fromLat, fromLng, toLat, toLng);
+  if (!result) return fail(res, 502, 'คำนวณระยะทางไม่สำเร็จ — ตรวจสอบ ORS_API_KEY หรือลองใหม่');
 
-  const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${encodeURIComponent(apiKey)}&start=${fromLng},${fromLat}&end=${toLng},${toLat}`;
-
-  try {
-    const orsRes = await fetch(url);
-    const data = await orsRes.json();
-    if (!orsRes.ok) {
-      return fail(res, 502, data?.error?.message || 'คำนวณระยะทางไม่สำเร็จ');
-    }
-    const summary = data?.features?.[0]?.properties?.summary;
-    if (!summary) return fail(res, 502, 'ไม่พบข้อมูลระยะทางจาก OpenRouteService');
-
-    return json(res, 200, {
-      distance_km: Math.round((summary.distance / 1000) * 10) / 10,
-      duration_min: Math.round(summary.duration / 60)
-    });
-  } catch (err) {
-    return fail(res, 502, 'เชื่อมต่อ OpenRouteService ไม่สำเร็จ: ' + err.message);
-  }
+  return json(res, 200, result);
 };

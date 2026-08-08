@@ -1,9 +1,16 @@
 const { supabase } = require('../lib/supabase');
 const { json, fail, readBody, roomsFor, nightsBetween, emptyBedsByGender } = require('../lib/http');
 const { getActor, isAdmin: checkIsAdmin } = require('../lib/auth');
+const { drivingDistance } = require('../lib/directions');
 
 const MISSION_TYPES = ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'];
 const MAX_PRICE_PER_ROOM_NIGHT = 600;
+// สรุป-requirement-แผนที่จองที่พัก.md §3 — home-distance-rule: warn (not block)
+// when the employee's home is closer to the branch than this, since going home
+// beats booking a room. Follows the same "push a string into rule_violations,
+// forcing admin review" pattern as the RATE_CAP/empty-bed rules — no separate
+// enforcement path to maintain.
+const HOME_DISTANCE_WARN_KM = 10;
 
 // booking_status_log — every status transition, from the first insert onward,
 // so admin time-saved can eventually be measured against a real "before".
@@ -139,7 +146,7 @@ async function nextBookingId() {
 }
 
 async function createBooking(req, res, actor, body) {
-  const { branch_code, work_schedule_id, checkin_date, checkout_date, note, guests, hotel_choices, mission_type, mission_type_note } = body;
+  const { branch_code, work_schedule_id, checkin_date, checkout_date, note, guests, hotel_choices, mission_type, mission_type_note, home_distance_reason } = body;
 
   if (!branch_code) return fail(res, 400, 'ยังไม่ได้เลือกสาขา');
   if (!checkin_date || !checkout_date) return fail(res, 400, 'ยังไม่ได้เลือกวันเข้าพัก–วันออก');
@@ -160,7 +167,7 @@ async function createBooking(req, res, actor, body) {
     if (mission_type === 'อื่นๆ' && !String(mission_type_note || '').trim()) return fail(res, 400, 'กรุณาระบุรายละเอียดภารกิจ');
   }
 
-  const { data: branchRow } = await supabase.from('branches').select('code').eq('code', branch_code).maybeSingle();
+  const { data: branchRow } = await supabase.from('branches').select('code, lat, lng').eq('code', branch_code).maybeSingle();
   if (!branchRow) return fail(res, 400, 'ไม่พบรหัสสาขานี้ในทะเบียน');
 
   // Rule: warn when the same person is already booked on overlapping dates.
@@ -175,6 +182,20 @@ async function createBooking(req, res, actor, body) {
   // sharing (phase 2) exists, not something this admin review would fix.
   const ruleViolations = [];
   if (conflicts.length) ruleViolations.push(...conflicts);
+
+  // Recomputed server-side (not trusting a client-supplied distance) so the
+  // warning can't be spoofed away. Silently skipped when either coordinate is
+  // missing — matches the requirement doc's "ไม่มีข้อมูล ไม่ต้องบล็อกการขอที่พัก".
+  if (actor.home_lat != null && actor.home_lng != null && branchRow.lat != null && branchRow.lng != null) {
+    const home = await drivingDistance(actor.home_lat, actor.home_lng, branchRow.lat, branchRow.lng);
+    if (home && home.distance_km < HOME_DISTANCE_WARN_KM) {
+      const reason = String(home_distance_reason || '').trim();
+      ruleViolations.push(reason
+        ? `บ้านห่างจากสาขาแค่ ${home.distance_km} กม. (ต่ำกว่า ${HOME_DISTANCE_WARN_KM} กม.) — เหตุผลที่ยังขอที่พัก: ${reason}`
+        : `บ้านห่างจากสาขาแค่ ${home.distance_km} กม. (ต่ำกว่า ${HOME_DISTANCE_WARN_KM} กม.) — ยังไม่ระบุเหตุผลที่ไม่กลับบ้านแทน`);
+    }
+  }
+
   const customChoice = hotel_choices.find((c) => !c.hotel_id);
   if (customChoice) ruleViolations.push(`ที่พัก "${customChoice.custom_name || '(ไม่มีชื่อ)'}" เป็นที่พักนอกทะเบียน ต้องให้แอดมินยืนยันก่อน`);
   const hotelIds = hotel_choices.map((c) => c.hotel_id).filter(Boolean);

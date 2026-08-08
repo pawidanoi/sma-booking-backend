@@ -18,7 +18,7 @@ async function getActor(code) {
   if (!code) return null;
   const { data } = await supabase
     .from('employees')
-    .select('code, name, nickname, team_code, position')
+    .select('code, name, nickname, team_code, position, home_lat, home_lng')
     .eq('code', code)
     .maybeSingle();
   return data;
