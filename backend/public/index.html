@@ -751,7 +751,8 @@ function renderBookingMap(){
   const el = document.getElementById('bookingMap');
   if (window._bookingMap) { window._bookingMap.remove(); window._bookingMap = null; }
   if (!el || typeof L === 'undefined') return;
-  const map = L.map(el, { zoomControl:false, attributionControl:true, scrollWheelZoom:false });
+  const map = L.map(el, { zoomControl:false, attributionControl:true, dragging:false,
+    scrollWheelZoom:false, touchZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false });
   window._bookingMap = map;
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom:18, attribution:'© OpenStreetMap'
