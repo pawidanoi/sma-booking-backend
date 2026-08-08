@@ -8,8 +8,8 @@ const { push, qrUri, qrPostback, liffLink } = require('../lib/line');
 // schedule-pending, schedule-remind, schedule-delete) into one, dispatched by
 // `action`. Behavior of each action is unchanged from its original file.
 //
-// GET  /api/admin-import?actor=...&action=schedule_pending
-// POST /api/admin-import  body: { actor, action: 'schedule_import'|'branch_import'|'schedule_remind'|'schedule_delete', ... }
+// GET  /api/admin-import?actor=...&action=schedule_pending|branch_provinces
+// POST /api/admin-import  body: { actor, action: 'schedule_import'|'branch_import'|'schedule_remind'|'schedule_delete'|'employee_home_import'|'hotel_import', ... }
 module.exports = async function handler(req, res) {
   const body = readBody(req);
   const actor = await getActor(req.query.actor || body.actor);
@@ -18,6 +18,7 @@ module.exports = async function handler(req, res) {
 
   if (req.method === 'GET') {
     if (req.query.action === 'schedule_pending') return schedulePending(res);
+    if (req.query.action === 'branch_provinces') return branchProvinces(res);
     return fail(res, 400, `ไม่รู้จัก action: ${req.query.action}`);
   }
 
@@ -26,6 +27,8 @@ module.exports = async function handler(req, res) {
     if (body.action === 'branch_import') return branchImport(res, actor, body);
     if (body.action === 'schedule_remind') return scheduleRemind(res, actor, body);
     if (body.action === 'schedule_delete') return scheduleDelete(res, body);
+    if (body.action === 'employee_home_import') return employeeHomeImport(res, body);
+    if (body.action === 'hotel_import') return hotelImport(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -309,6 +312,148 @@ async function scheduleDelete(res, body) {
   if (delErr) return fail(res, 500, delErr.message);
 
   return json(res, 200, { ok: true, deleted_bookings: deletedBookings, unlinked_bookings: unlinkedBookings });
+}
+
+// ---------------------------------------------------------------- branch_provinces
+// (map feature groundwork) — tells the hotel-research pass exactly which
+// provinces have a branch in them, instead of guessing from a stale list.
+
+async function branchProvinces(res) {
+  const { data, error } = await supabase
+    .from('branches')
+    .select('code, name, province, district, lat, lng')
+    .order('province');
+  if (error) return fail(res, 500, error.message);
+
+  const byProvince = new Map();
+  (data || []).forEach((b) => {
+    const p = b.province || '(ไม่ระบุจังหวัด)';
+    if (!byProvince.has(p)) byProvince.set(p, []);
+    byProvince.get(p).push(b);
+  });
+  const provinces = Array.from(byProvince.entries())
+    .map(([province, branches]) => ({ province, branch_count: branches.length }))
+    .sort((a, b) => b.branch_count - a.branch_count);
+
+  return json(res, 200, { total_branches: (data || []).length, provinces, branches: data || [] });
+}
+
+// ---------------------------------------------------------------- employee_home_import
+// (map feature groundwork, §4 bulk import from HR) — updates existing employees
+// only; never inserts, so a typo'd code just gets skipped instead of creating
+// a broken half-row.
+
+async function employeeHomeImport(res, body) {
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  if (rows.length === 0) return fail(res, 400, 'ไม่พบแถวข้อมูล');
+
+  const { data: existing, error: exErr } = await supabase.from('employees').select('code');
+  if (exErr) return fail(res, 500, exErr.message);
+  const knownCodes = new Set((existing || []).map((e) => e.code));
+
+  let updated = 0;
+  const skipped = [];
+  for (const row of rows) {
+    const code = String(row.code || '').trim();
+    if (!code) { skipped.push({ code, reason: 'ไม่มีรหัสพนักงาน' }); continue; }
+    if (!knownCodes.has(code)) { skipped.push({ code, reason: 'ไม่พบพนักงานนี้ในระบบ' }); continue; }
+
+    const lat = row.home_lat === null || row.home_lat === undefined || row.home_lat === '' ? null : Number(row.home_lat);
+    const lng = row.home_lng === null || row.home_lng === undefined || row.home_lng === '' ? null : Number(row.home_lng);
+    const { error } = await supabase
+      .from('employees')
+      .update({
+        home_address: row.home_address || null,
+        home_subdistrict: row.home_subdistrict || null,
+        home_district: row.home_district || null,
+        home_province: row.home_province || null,
+        home_lat: Number.isFinite(lat) ? lat : null,
+        home_lng: Number.isFinite(lng) ? lng : null
+      })
+      .eq('code', code);
+    if (error) { skipped.push({ code, reason: error.message }); continue; }
+    updated++;
+  }
+
+  return json(res, 200, { ok: true, updated, skipped: skipped.length, skipped_detail: skipped });
+}
+
+// ---------------------------------------------------------------- hotel_import
+// (map feature groundwork) — full refresh of one province's hotel entries from
+// the Choowap corp-portal research pass. Won't delete a hotel still referenced
+// by a real booking_hotel_choices row (keeps booking history intact); everything
+// else in the province gets replaced by the fresh batch.
+
+async function hotelImport(res, body) {
+  const province = String(body.province || '').trim();
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  if (!province) return fail(res, 400, 'ไม่พบจังหวัด');
+  if (rows.length === 0) return fail(res, 400, 'ไม่พบแถวข้อมูลโรงแรม');
+
+  const { data: existing, error: exErr } = await supabase.from('hotels').select('id').eq('province', province);
+  if (exErr) return fail(res, 500, exErr.message);
+  const existingIds = (existing || []).map((h) => h.id);
+
+  let referencedIds = new Set();
+  if (existingIds.length) {
+    const { data: refs, error: refErr } = await supabase
+      .from('booking_hotel_choices')
+      .select('hotel_id')
+      .in('hotel_id', existingIds);
+    if (refErr) return fail(res, 500, refErr.message);
+    referencedIds = new Set((refs || []).map((r) => r.hotel_id));
+  }
+
+  const deletableIds = existingIds.filter((id) => !referencedIds.has(id));
+  let deleted = 0;
+  if (deletableIds.length) {
+    const { error: delErr } = await supabase.from('hotels').delete().in('id', deletableIds);
+    if (delErr) return fail(res, 500, delErr.message);
+    deleted = deletableIds.length;
+  }
+
+  const valid = [];
+  const skipped = [];
+  rows.forEach((row, i) => {
+    const name = String(row.name || '').trim();
+    const price = Number(row.price);
+    if (!name || !Number.isFinite(price)) { skipped.push({ row: i + 1, reason: 'ไม่มีชื่อหรือราคา' }); return; }
+    const lat = Number(row.lat), lng = Number(row.lng);
+    const reviewScore = Number(row.review_score);
+    valid.push({
+      name,
+      province,
+      district: row.district || null,
+      address: row.address || null,
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+      map_link: Number.isFinite(lat) && Number.isFinite(lng) ? `https://www.google.com/maps?q=${lat},${lng}` : null,
+      default_price_per_night: price,
+      review_score: Number.isFinite(reviewScore) ? reviewScore : null,
+      review_url: row.review_url || null,
+      choowap_addi_id: row.choowap_addi_id ? String(row.choowap_addi_id) : null,
+      source: 'choowap',
+      is_custom: false,
+      active: true
+    });
+  });
+
+  let inserted = 0;
+  if (valid.length) {
+    const { error: insErr } = await supabase.from('hotels').insert(valid);
+    if (insErr) return fail(res, 500, insErr.message);
+    inserted = valid.length;
+  }
+
+  return json(res, 200, {
+    ok: true,
+    province,
+    deleted,
+    kept_referenced: referencedIds.size,
+    inserted,
+    skipped: skipped.length,
+    skipped_detail: skipped
+  });
 }
 
 // ---------------------------------------------------------------- shared helpers
