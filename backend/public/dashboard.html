@@ -333,12 +333,12 @@ function updateDashMapPins(){
   getFiltered().filter(r=>r.booking_id).forEach(r => {
     if (r.branch_lat!=null && r.branch_lng!=null) {
       const m = L.marker([r.branch_lat,r.branch_lng], { icon: dashPinIcon('ส','--brand') });
-      m.bindPopup(`<div style="font-size:12.5px"><strong>${esc(r.branch_name||'')}</strong><br>${esc(r.hotel_name||'')}<br><button class="xlbtn" style="margin-top:6px" onclick="openModal(${JSON.stringify(r.id)})">ดูรายละเอียด</button></div>`);
+      m.bindPopup(`<div style="font-size:12.5px"><strong>${esc(r.branch_name||'')}</strong><br>${esc(r.hotel_name||'')}<br><button class="xlbtn" style="margin-top:6px" onclick='openModal(${JSON.stringify(r.id)})'>ดูรายละเอียด</button></div>`);
       DASH_CLUSTER.addLayer(m); pts.push([r.branch_lat,r.branch_lng]);
     }
     if (r.hotel_lat!=null && r.hotel_lng!=null) {
       const m = L.marker([r.hotel_lat,r.hotel_lng], { icon: dashPinIcon('ท','--amber') });
-      m.bindPopup(`<div style="font-size:12.5px"><strong>${esc(r.hotel_name||'')}</strong><br>${esc(r.branch_name||'')}<br><button class="xlbtn" style="margin-top:6px" onclick="openModal(${JSON.stringify(r.id)})">ดูรายละเอียด</button></div>`);
+      m.bindPopup(`<div style="font-size:12.5px"><strong>${esc(r.hotel_name||'')}</strong><br>${esc(r.branch_name||'')}<br><button class="xlbtn" style="margin-top:6px" onclick='openModal(${JSON.stringify(r.id)})'>ดูรายละเอียด</button></div>`);
       DASH_CLUSTER.addLayer(m); pts.push([r.hotel_lat,r.hotel_lng]);
     }
   });
