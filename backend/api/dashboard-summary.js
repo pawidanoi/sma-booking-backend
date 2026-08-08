@@ -38,9 +38,16 @@ module.exports = async function handler(req, res) {
       .gte('checkin_date', from)
       .lte('checkin_date', to);
 
-    const [{ data: legacyRows, error: legacyErr }, { data: liveRowsRaw, error: liveErr }] = await Promise.all([legacyQ, liveQ]);
+    // Dashboard overview map: every employee's home pin, gated behind this
+    // endpoint's isDashboardViewer check rather than the general bootstrap staff
+    // list (which every logged-in employee receives) — home addresses are
+    // exactly the kind of coworker data that list must never leak.
+    const homesQ = supabase.from('employees').select('code, name, nickname, home_lat, home_lng').eq('active', true).not('home_lat', 'is', null).not('home_lng', 'is', null);
+
+    const [{ data: legacyRows, error: legacyErr }, { data: liveRowsRaw, error: liveErr }, { data: homeRows, error: homesErr }] = await Promise.all([legacyQ, liveQ, homesQ]);
     if (legacyErr) return fail(res, 500, legacyErr.message);
     if (liveErr) return fail(res, 500, liveErr.message);
+    if (homesErr) return fail(res, 500, homesErr.message);
 
     // Map screen (dashboard, "booking นี้" pins): the one home location shown per
     // booking is the requester's — same convention the home-distance-rule already
@@ -80,7 +87,11 @@ module.exports = async function handler(req, res) {
       total_cost: sum(rows, 'total_cost')
     })).sort((a, b) => b.total_cost - a.total_cost).slice(0, 10);
 
-    json(res, 200, { records, kpis, monthly_trend, src_split, cost_per_person_night_trend, team_cost, top_hotels });
+    const employee_homes = (homeRows || []).map((e) => ({
+      code: e.code, name: e.nickname || e.name, lat: Number(e.home_lat), lng: Number(e.home_lng)
+    }));
+
+    json(res, 200, { records, kpis, monthly_trend, src_split, cost_per_person_night_trend, team_cost, top_hotels, employee_homes });
   } catch (err) {
     console.error('dashboard-summary error', err);
     fail(res, 500, err.message || 'เกิดข้อผิดพลาดในระบบ');

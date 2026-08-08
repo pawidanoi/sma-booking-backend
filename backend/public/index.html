@@ -575,7 +575,9 @@ function renderForm(){
       <div class="hint" style="margin-top:4px">ลองพิจารณากลับบ้านแทนการขอที่พักไหม — ถ้ายังจำเป็นต้องพัก กรุณาระบุเหตุผลไว้ด้วย</div>
       <div class="label" style="margin-top:10px">เหตุผลที่ยังต้องขอที่พัก</div>
       <textarea class="txt" placeholder="เช่น ต้องอยู่เตรียมงานตั้งแต่เช้ามืด" oninput="setHomeCheckReason(this.value)">${esc(hc.reason||'')}</textarea>
-    </div>` : '';
+    </div>` :
+    (hc && hc.km!=null) ? `
+    <div class="hint" style="margin:-2px 0 10px">บ้านของคุณห่างจากสาขานี้ ${hc.km} กม. (ขับรถจริง ~${hc.min} นาที)</div>` : '';
 
   const showMap = hasBranchCoords(j) || (ME && ME.home_lat!=null) || S.hotelPicks.some(h=>h.lat!=null);
   const mapCard = showMap ? `<div class="card" style="padding:10px">
