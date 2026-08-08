@@ -538,19 +538,28 @@ function renderForm(){
       <input class="txt" placeholder="ระบุสั้นๆ" value="${esc(S.missionNote||'')}" oninput="S.missionNote=this.value"/>`:''}
     </div>` : '';
 
-  let list = effProv ? HOTELS.filter(h=>h.prov===effProv) : [];
-  if(j.blat!=null){
-    list = list.map(h=>Object.assign({}, h, { _km:haversine(j.blat,j.blng,h.lat,h.lng) }))
-               .sort((a,b)=>(a._km==null?9999:a._km)-(b._km==null?9999:b._km));
+  // Same province is always eligible (no distance cap); a hotel in a different
+  // province is only eligible within NEARBY_KM of the branch — needs the branch's
+  // own coordinates to check, so falls back to the old province-only list when
+  // the branch has none.
+  const NEARBY_KM = 30;
+  let list;
+  if (j.blat != null && j.blng != null) {
+    list = HOTELS
+      .map(h => Object.assign({}, h, { _km: haversine(j.blat, j.blng, h.lat, h.lng) }))
+      .filter(h => h.prov === effProv || (h._km != null && h._km <= NEARBY_KM))
+      .sort((a,b) => (a._km==null?9999:a._km) - (b._km==null?9999:b._km));
   } else {
-    list = list.slice().sort((a,b)=>(a.price==null?9999:a.price)-(b.price==null?9999:b.price));
+    list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
+      .sort((a,b)=>(a.price==null?9999:a.price)-(b.price==null?9999:b.price));
   }
   const hotelHtml=list.map(h=>{
     const sel=S.hotelPicks.some(x=>x.code===h.code);
     const dist = h._km!=null ? `ห่าง ${h._km.toFixed(1)} กม.` : (h.near?('ใกล้ '+esc(h.near)):'');
+    const provTag = h.prov && h.prov!==effProv ? ` · จ.${esc(h.prov)}` : '';
     return `<div class="hotel ${sel?'sel':''}" onclick="toggleHotel('${esc(h.code)}')">
       <div class="chk">${sel?'✓':''}</div>
-      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${h.choowap?' · Choowap':''}</div></div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''}</div></div>
       <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
   }).join("");
 
@@ -622,7 +631,7 @@ function renderForm(){
       <input class="txt" type="date" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
      ${S.checkin&&S.checkout&&!dateOk?`<div class="errtext">วันออกต้องหลังวันเข้าพัก</div>`:''}
      ${nights>0?`<div class="hint" style="margin:6px 0 0">${nights} คืน</div>`:''}</div>
-    ${effProv?`<div class="card"><div class="label">เลือกที่พัก — ใน จ.${esc(effProv)} ${j.blat!=null?'(เรียงตามระยะทางจากสาขา)':'(เรียงตามราคา)'} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
+    ${effProv?`<div class="card"><div class="label">เลือกที่พัก ${j.blat!=null?`— จ.${esc(effProv)} หรือใกล้เคียงในระยะ 30 กม. (เรียงตามระยะทาง)`:`— ใน จ.${esc(effProv)} (เรียงตามราคา)`} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
      ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}</div>`:''}
     <div class="card"><div class="label">จำนวนผู้เข้าพัก (แยกเพศก่อน)</div>
      <div style="display:flex;gap:22px;align-items:center;margin-top:4px">
