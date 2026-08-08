@@ -30,8 +30,8 @@
      bezel/shadow/fake-statusbar chrome below ~430px so content uses the real
      screen instead of a picture of one; keep the rolebar, it's real navigation. */
   @media (max-width:430px){
-    body{padding:0}
-    .phone{width:100%;max-width:none;height:100vh;height:100dvh;border:0;border-radius:0;box-shadow:none}
+    body{padding:0;height:100vh;height:100dvh}
+    .phone{width:100%;max-width:none;height:auto;flex:1;min-height:0;border:0;border-radius:0;box-shadow:none}
     .statusbar{display:none}
   }
   .appbar{background:var(--brand);color:#fff;padding:6px 16px 14px;display:flex;align-items:center;gap:10px;border-bottom:3px solid var(--gold)}
