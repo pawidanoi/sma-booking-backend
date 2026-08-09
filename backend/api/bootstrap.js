@@ -77,8 +77,18 @@ module.exports = async function handler(req, res) {
 async function updateHome(req, res) {
   const body = readBody(req);
   const code = (body.code || '').trim();
-  const lat = Number(body.lat), lng = Number(body.lng);
   if (!code) return fail(res, 400, 'กรุณาใส่รหัสพนักงาน');
+
+  // Explicit null clears the address (spec §13 lets an employee edit/remove it
+  // any time) — never coerce to 0,0, which would look like a real "Null
+  // Island" coordinate to every distance check in the app.
+  if (body.lat === null && body.lng === null) {
+    const { error } = await supabase.from('employees').update({ home_lat: null, home_lng: null }).eq('code', code);
+    if (error) return fail(res, 500, error.message);
+    return json(res, 200, { ok: true, home_lat: null, home_lng: null });
+  }
+
+  const lat = Number(body.lat), lng = Number(body.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return fail(res, 400, 'พิกัดไม่ถูกต้อง — ลองวางลิงก์ Google Maps อีกครั้ง');
   const { error } = await supabase.from('employees').update({ home_lat: lat, home_lng: lng }).eq('code', code);
   if (error) return fail(res, 500, error.message);
