@@ -191,6 +191,28 @@ async function checkHomeDistanceIfNeeded(){
 }
 function setHomeCheckReason(v){ if(S.homeCheck) S.homeCheck.reason = v; }
 
+function setHomeLinkDraft(v){ S.homeLinkDraft = v; } // silent — typing must never re-render
+function parseLatLng(text){
+  text = String(text||'').trim();
+  let m = text.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) // shared-link @lat,lng
+    || text.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) // ?q=lat,lng
+    || text.match(/^(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)$/); // typed straight as lat,lng
+  if(!m) return null;
+  const lat=Number(m[1]), lng=Number(m[2]);
+  return (Number.isFinite(lat)&&Number.isFinite(lng)) ? {lat,lng} : null;
+}
+async function saveHomeLocation(){
+  const parsed = parseLatLng(S.homeLinkDraft);
+  if(!parsed){ toast('อ่านพิกัดจากลิงก์ไม่ได้ — ลองวางลิงก์ Google Maps ใหม่ หรือพิมพ์เป็น lat,lng'); return; }
+  try{
+    await apiSend('/bootstrap','POST',{ code:ME.code, lat:parsed.lat, lng:parsed.lng });
+    ME.home_lat=parsed.lat; ME.home_lng=parsed.lng;
+    S.homeLinkDraft=''; S._homeCheckKey=null;
+    toast('บันทึกตำแหน่งบ้านแล้ว ✓');
+    rerender(renderForm);
+  }catch(e){ toast(e.message); }
+}
+
 function tickClock(){
   const el=$("#clock"); if(!el) return;
   const d=new Date(); el.textContent = String(d.getHours()).padStart(2,'0')+":"+String(d.getMinutes()).padStart(2,'0');
@@ -577,7 +599,20 @@ function renderForm(){
       <textarea class="txt" placeholder="เช่น ต้องอยู่เตรียมงานตั้งแต่เช้ามืด" oninput="setHomeCheckReason(this.value)">${esc(hc.reason||'')}</textarea>
     </div>` :
     (hc && hc.km!=null) ? `
-    <div class="hint" style="margin:-2px 0 10px">บ้านของคุณห่างจากสาขานี้ ${hc.km} กม. (ขับรถจริง ~${hc.min} นาที)</div>` : '';
+    <div class="hint" style="margin:-2px 0 10px">บ้านของคุณห่างจากสาขานี้ ${hc.km} กม. (ขับรถจริง ~${hc.min} นาที)</div>` :
+    (ME && ME.home_lat!=null && !hasBranchCoords(j)) ? `
+    <div class="hint" style="margin:-2px 0 10px">สาขานี้ยังไม่มีพิกัดในทะเบียน — ยังเทียบระยะทางจากบ้านไม่ได้</div>` : '';
+
+  // Empty state per requirement doc §12-13: shown any time the employee has no
+  // home coordinates yet, independent of which branch/screen they're on — set
+  // once, used by every future booking. Self-service, no admin step.
+  const homeAddrCard = (ME && ME.home_lat==null) ? `
+    <div class="card">
+      <div class="label">ยังไม่มีข้อมูลที่อยู่บ้านของคุณ</div>
+      <div class="hint" style="margin-bottom:8px">กรอกครั้งเดียว ใช้ได้ทุกครั้งที่ขอที่พัก — เปิด Google Maps ปักหมุดตำแหน่งบ้าน แล้วกดแชร์ลิงก์มาวางที่นี่</div>
+      <input class="txt" placeholder="วางลิงก์ Google Maps หรือพิกัด เช่น 13.7563,100.5018" value="${esc(S.homeLinkDraft||'')}" oninput="setHomeLinkDraft(this.value)"/>
+      <button class="btn ghost" style="margin-top:8px" onclick="saveHomeLocation()">บันทึกตำแหน่งบ้าน</button>
+    </div>` : '';
 
   const showMap = hasBranchCoords(j) || S.hotelPicks.some(h=>h.lat!=null);
   const mapCard = showMap ? `<div class="card" style="padding:10px">
@@ -729,7 +764,7 @@ function renderForm(){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span>
     <div style="flex:1"><h1>${S.editId?'แก้ไขคำขอ':(j.adhoc?'จองเพิ่ม':'ขอที่พัก')}</h1><span class="sub">${esc(j.branch||'เลือกสาขา')}</span></div></div>
    <div class="body">
-    ${branchCard}${branchPicker}${provPicker}${homeWarnCard}${mapCard}${missionCard}
+    ${branchCard}${branchPicker}${provPicker}${homeAddrCard}${homeWarnCard}${mapCard}${missionCard}
     <div class="card"><div class="label">วันเข้าพัก – วันออก (เลือกเอง)</div>
      <div style="display:flex;gap:10px">
       <input class="txt" type="date" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
@@ -771,16 +806,16 @@ function renderBookingMap(){
     if (lat==null || lng==null || lat===0 || lng===0) return;
     const icon = L.divIcon({
       className:'',
-      html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
-      iconSize:[24,24], iconAnchor:[12,12]
+      html:`<div style="width:26px;height:26px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+      iconSize:[26,26], iconAnchor:[13,13]
     });
     L.marker([lat,lng], {icon}).addTo(map);
     pts.push([lat,lng]);
   }
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const j = S.job;
-  if (hasBranchCoords(j)) pin(j.blat, j.blng, 'ส', cssVar('--brand'));
-  S.hotelPicks.forEach(h => { if (h.lat!=null) pin(h.lat, h.lng, 'ท', cssVar('--amber')); });
+  if (hasBranchCoords(j)) pin(j.blat, j.blng, '🏪', cssVar('--brand'));
+  S.hotelPicks.forEach(h => { if (h.lat!=null) pin(h.lat, h.lng, '🏨', cssVar('--amber')); });
 
   if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });
   else if (pts.length === 1) map.setView(pts[0], 14);
@@ -805,27 +840,26 @@ function renderAdminMap(b, suggestions){
   const pts = [];
   function pin(lat, lng, label, color, opts){
     if (lat==null || lng==null || lat===0 || lng===0) return;
-    const strike = opts && opts.strike ? 'text-decoration:line-through;' : '';
     const icon = L.divIcon({
       className:'',
-      html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);${strike}">${label}</div>`,
-      iconSize:[24,24], iconAnchor:[12,12]
+      html:`<div style="width:26px;height:26px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+      iconSize:[26,26], iconAnchor:[13,13]
     });
     const mk = L.marker([lat,lng], {icon});
     if (opts && opts.popup) mk.bindPopup(opts.popup);
     mk.addTo(map);
     pts.push([lat,lng]);
   }
-  if (hasBranchCoords(b)) pin(b.blat, b.blng, 'ส', cssVar('--brand'));
+  if (hasBranchCoords(b)) pin(b.blat, b.blng, '🏪', cssVar('--brand'));
   (b.hotels||[]).forEach(h => {
     if (h.lat==null) return;
-    pin(h.lat, h.lng, 'ท', h.unavailable ? '#9a9a9a' : cssVar('--amber'), { strike: h.unavailable });
+    pin(h.lat, h.lng, h.unavailable ? '🚫' : '🏨', h.unavailable ? '#9a9a9a' : cssVar('--amber'));
   });
   (suggestions||[]).forEach(h => {
     if (h.lat==null) return;
     const popup = `<div style="font-size:12.5px"><strong>${esc(h.name)}</strong><br>${h.price!=null?h.price+'฿':''}
       <br><button class="btn" style="margin-top:6px;padding:6px 10px;font-size:12px" onclick="addHotelChoiceForBooking('${b.id}','${esc(h.code)}')">เลือกที่นี่แทน</button></div>`;
-    pin(h.lat, h.lng, '+', cssVar('--success'), { popup });
+    pin(h.lat, h.lng, '⭐', cssVar('--success'), { popup });
   });
 
   if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });

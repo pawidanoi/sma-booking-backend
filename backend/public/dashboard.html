@@ -84,7 +84,7 @@ let SORT = { key:'total_cost', dir:'desc' };
 let PAGE = 0;
 const PAGE_SIZE = 50;
 const CHARTS = {};
-let DASH_MAP = null, DASH_HIGHLIGHT = null;
+let DASH_MAP = null, DASH_HIGHLIGHT = null, DASH_MEASURE = null;
 let DASH_BRANCHES = [], DASH_HOTELS = [], DASH_HOMES = [];
 
 async function apiGet(path){
@@ -156,9 +156,11 @@ function renderDashboard(d){
       </div>
       <div class="kpis" id="kpis"></div>
       <div class="card">
-        <div class="card-head"><h3>แผนที่ภาพรวม — สาขา / ที่พัก / ที่อยู่พนักงาน</h3></div>
+        <div class="card-head"><h3>แผนที่ภาพรวม — สาขา / ที่พัก / ที่อยู่พนักงาน</h3>
+          <button class="xlbtn" id="measureBtn" style="color:var(--brand2);border-color:var(--brand2)" onclick="toggleMeasureMode()">📏 วัดระยะทางระหว่าง 2 จุด</button></div>
         <div id="dashMap" style="height:400px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
-        <div id="dashMapHint" class="hint" style="margin-top:8px">ใช้กล่องเช็คด้านขวาบนแผนที่เพื่อซ่อน/โชว์แต่ละชั้นข้อมูล · คลิกแถวในตารางด้านล่างเพื่อดูระยะทางขับรถจริงจากสาขาไปที่พักของ booking นั้น</div>
+        <div id="measureHint" class="hint" style="margin-top:8px;font-weight:700"></div>
+        <div id="dashMapHint" class="hint" style="margin-top:4px">ใช้กล่องเช็คด้านขวาบนแผนที่เพื่อซ่อน/โชว์แต่ละชั้นข้อมูล · คลิกแถวในตารางด้านล่างเพื่อดูระยะทางขับรถจริงจากสาขาไปที่พักของ booking นั้น</div>
       </div>
       <div style="text-align:right;margin-bottom:10px"><button class="xlbtn" onclick="exportAllToExcel()">📥 Export ทั้งหมดเป็น Excel</button></div>
       <div class="charts">
@@ -187,10 +189,58 @@ function renderDashboard(d){
     </div>
     <div id="modalRoot"></div>`;
 
-  drawKpis(d.kpis);
-  drawCharts(d);
+  refreshKpisAndCharts();
   redrawTable();
   initDashMap();
+}
+
+// KPIs/charts are recomputed client-side from the currently filtered records
+// (same source the table already uses) instead of the server's unfiltered
+// d.kpis/d.monthly_trend — otherwise filtering by month/team only ever
+// changed the table below, which is what looked like "nothing changes."
+function groupByClient(rows, keyFn, mapFn){
+  const groups = new Map();
+  for (const r of rows){ const k=keyFn(r); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); }
+  return Array.from(groups.entries()).map(([key,groupRows])=>mapFn(groupRows,key));
+}
+function sumClient(rows,key){ return rows.reduce((a,r)=>a+(Number(r[key])||0),0); }
+
+function computeKpisClient(records){
+  const total_cost = sumClient(records,'total_cost');
+  const empty_bed_cost = sumClient(records,'empty_bed_cost');
+  const total_person_nights = sumClient(records,'person_nights');
+  return {
+    total_cost, empty_bed_cost,
+    empty_bed_cost_pct: total_cost>0 ? Math.round((empty_bed_cost/total_cost)*1000)/10 : 0,
+    booking_count: records.length,
+    avg_baht_per_person_night: total_person_nights>0 ? Math.round((total_cost/total_person_nights)*100)/100 : 0,
+    total_person_nights,
+    needs_fix_count_legacy: records.filter(r=>r.needs_manual_fix).length
+  };
+}
+
+function computeChartDataClient(records){
+  const monthly_trend = groupByClient(records, r=>r.month_start, (rows,key)=>({
+    month_start:key, month_label:rows[0].month_label,
+    total_cost:sumClient(rows,'total_cost'), person_nights:sumClient(rows,'person_nights')
+  })).sort((a,b)=>a.month_start<b.month_start?-1:1);
+  const src_split = {
+    SMA:{ total_cost:sumClient(records.filter(r=>r.src==='SMA'),'total_cost'), count:records.filter(r=>r.src==='SMA').length },
+    AREA:{ total_cost:sumClient(records.filter(r=>r.src==='AREA'),'total_cost'), count:records.filter(r=>r.src==='AREA').length }
+  };
+  const cost_per_person_night_trend = monthly_trend.map(m=>({
+    month_start:m.month_start, month_label:m.month_label,
+    value: m.person_nights>0 ? Math.round((m.total_cost/m.person_nights)*100)/100 : 0
+  }));
+  const team_cost = groupByClient(records, r=>r.team_code||'—', (rows,key)=>({ team_code:key, total_cost:sumClient(rows,'total_cost') })).sort((a,b)=>b.total_cost-a.total_cost);
+  const top_hotels = groupByClient(records, r=>r.hotel_name||'—', (rows,key)=>({ hotel_name:key, total_cost:sumClient(rows,'total_cost') })).sort((a,b)=>b.total_cost-a.total_cost).slice(0,10);
+  return { monthly_trend, src_split, cost_per_person_night_trend, team_cost, top_hotels, records };
+}
+
+function refreshKpisAndCharts(){
+  const records = getFiltered();
+  drawKpis(computeKpisClient(records));
+  drawCharts(computeChartDataClient(records));
 }
 
 function onFilterChange(){
@@ -200,6 +250,7 @@ function onFilterChange(){
   FILTERS.search = ($("#fSearch").value||'').toLowerCase();
   PAGE = 0;
   redrawTable();
+  refreshKpisAndCharts();
 }
 
 function getFiltered(){
@@ -275,8 +326,8 @@ function dashPinIcon(label, cssVarName){
   const color = getComputedStyle(document.documentElement).getPropertyValue(cssVarName).trim();
   return L.divIcon({
     className:'',
-    html:`<div style="width:22px;height:22px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:10.5px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
-    iconSize:[22,22], iconAnchor:[11,11]
+    html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+    iconSize:[24,24], iconAnchor:[12,12]
   });
 }
 
@@ -295,28 +346,70 @@ function initDashMap(){
 
   const branchCluster = L.markerClusterGroup();
   DASH_BRANCHES.forEach(b => branchCluster.addLayer(
-    L.marker([b.lat,b.lng], { icon: dashPinIcon('ส','--brand') }).bindPopup(`<strong>${esc(b.name)}</strong><br>สาขา`)
+    L.marker([b.lat,b.lng], { icon: dashPinIcon('🏪','--brand') })
+      .bindPopup(`<strong>${esc(b.name)}</strong><br>สาขา`)
+      .on('click', () => onMeasureMarkerClick(b.lat, b.lng, `🏪 ${b.name}`))
   ));
   const hotelCluster = L.markerClusterGroup();
   DASH_HOTELS.forEach(h => hotelCluster.addLayer(
-    L.marker([h.lat,h.lng], { icon: dashPinIcon('ท','--amber') }).bindPopup(`<strong>${esc(h.name)}</strong><br>ที่พักในทะเบียน`)
+    L.marker([h.lat,h.lng], { icon: dashPinIcon('🏨','--amber') })
+      .bindPopup(`<strong>${esc(h.name)}</strong><br>ที่พักในทะเบียน`)
+      .on('click', () => onMeasureMarkerClick(h.lat, h.lng, `🏨 ${h.name}`))
   ));
   const homeCluster = L.markerClusterGroup();
   DASH_HOMES.forEach(e => homeCluster.addLayer(
-    L.marker([e.lat,e.lng], { icon: dashPinIcon('บ','--ink') }).bindPopup(`<strong>${esc(e.name)}</strong><br>${esc(e.code)}`)
+    L.marker([e.lat,e.lng], { icon: dashPinIcon('🏠','--ink') })
+      .bindPopup(`<strong>${esc(e.name)}</strong><br>${esc(e.code)}`)
+      .on('click', () => onMeasureMarkerClick(e.lat, e.lng, `🏠 ${e.name}`))
   ));
 
   [branchCluster, hotelCluster, homeCluster].forEach(c => c.addTo(DASH_MAP));
   L.control.layers(null, {
-    [`สาขา (${DASH_BRANCHES.length})`]: branchCluster,
-    [`ที่พัก (${DASH_HOTELS.length})`]: hotelCluster,
-    [`ที่อยู่พนักงาน (${DASH_HOMES.length})`]: homeCluster
+    [`🏪 สาขา (${DASH_BRANCHES.length})`]: branchCluster,
+    [`🏨 ที่พัก (${DASH_HOTELS.length})`]: hotelCluster,
+    [`🏠 ที่อยู่พนักงาน (${DASH_HOMES.length})`]: homeCluster
   }, { collapsed:false }).addTo(DASH_MAP);
 
   DASH_HIGHLIGHT = L.layerGroup().addTo(DASH_MAP);
+  DASH_MEASURE = L.layerGroup().addTo(DASH_MAP);
   const allPts = [...DASH_BRANCHES, ...DASH_HOTELS, ...DASH_HOMES].map(p=>[p.lat,p.lng]);
   if (allPts.length) DASH_MAP.fitBounds(allPts, { padding:[20,20] });
   else DASH_MAP.setView([13.75,100.5], 6);
+}
+
+// Free-form "measure any two pins" tool — separate from the per-booking
+// highlight, so an exec can compare e.g. two hotels near the same branch
+// without that pair being tied to any specific booking record.
+let MEASURE_MODE = false, MEASURE_POINTS = [];
+function toggleMeasureMode(){
+  MEASURE_MODE = !MEASURE_MODE;
+  MEASURE_POINTS = [];
+  if (DASH_MEASURE) DASH_MEASURE.clearLayers();
+  const btn = $("#measureBtn");
+  if (btn) btn.textContent = MEASURE_MODE ? '✕ ยกเลิกการวัดระยะ' : '📏 วัดระยะทางระหว่าง 2 จุด';
+  const hint = $("#measureHint");
+  if (hint) hint.textContent = MEASURE_MODE ? 'คลิกหมุด 2 จุดบนแผนที่ (ชนิดใดก็ได้) เพื่อวัดระยะทางขับรถจริง' : '';
+}
+
+async function onMeasureMarkerClick(lat, lng, label){
+  if (!MEASURE_MODE) return;
+  MEASURE_POINTS.push({lat,lng,label});
+  const hint = $("#measureHint");
+  if (MEASURE_POINTS.length === 1){
+    if (hint) hint.textContent = `เลือกจุดแรกแล้ว: ${label} — คลิกจุดที่สอง`;
+    return;
+  }
+  const [a,b] = MEASURE_POINTS;
+  DASH_MEASURE.clearLayers();
+  L.polyline([[a.lat,a.lng],[b.lat,b.lng]], { color:'#6b3fa0', weight:3, dashArray:'4 8' }).addTo(DASH_MEASURE);
+  if (hint) hint.textContent = 'กำลังคำนวณระยะทางขับรถจริง…';
+  MEASURE_POINTS = [];
+  try{
+    const d = await apiGet(`/directions?actor=${encodeURIComponent(ME.code)}&from_lat=${a.lat}&from_lng=${a.lng}&to_lat=${b.lat}&to_lng=${b.lng}`);
+    if (hint) hint.textContent = `${a.label} → ${b.label}: ${d.distance_km} กม. (~${d.duration_min} นาที) · คลิกหมุดใหม่เพื่อวัดอีกครั้ง`;
+  }catch(e){
+    if (hint) hint.textContent = 'คำนวณระยะทางไม่สำเร็จ · คลิกหมุดใหม่เพื่อลองอีกครั้ง';
+  }
 }
 
 // Draws a highlighted line + endpoint markers for one booking's branch->hotel
@@ -331,8 +424,8 @@ async function highlightRecordOnMap(id){
 
   const from = [r.branch_lat, r.branch_lng], to = [r.hotel_lat, r.hotel_lng];
   L.polyline([from, to], { color: getComputedStyle(document.documentElement).getPropertyValue('--brand2').trim(), weight:3, dashArray:'6 6' }).addTo(DASH_HIGHLIGHT);
-  L.marker(from, { icon: dashPinIcon('ส','--brand') }).addTo(DASH_HIGHLIGHT);
-  L.marker(to, { icon: dashPinIcon('ท','--amber') }).addTo(DASH_HIGHLIGHT);
+  L.marker(from, { icon: dashPinIcon('🏪','--brand') }).addTo(DASH_HIGHLIGHT);
+  L.marker(to, { icon: dashPinIcon('🏨','--amber') }).addTo(DASH_HIGHLIGHT);
   DASH_MAP.fitBounds([from, to], { padding:[60,60], maxZoom:14 });
 
   const distEl = $("#modalDistance");
@@ -368,7 +461,7 @@ function drawCharts(d){
     data:{ labels:d.monthly_trend.map(m=>m.month_label),
       datasets:[
         { type:'bar', label:'ค่าใช้จ่าย', data:d.monthly_trend.map(m=>m.total_cost), backgroundColor:COLORS.brand, yAxisID:'y' },
-        { type:'line', label:'ค่าเตียงว่าง', data:d.monthly_trend.map(m=>ALL_RECORDS.filter(r=>r.month_start===m.month_start).reduce((a,r)=>a+(r.empty_bed_cost||0),0)), borderColor:COLORS.amber||'#c98a00', yAxisID:'y1', tension:.3 }
+        { type:'line', label:'ค่าเตียงว่าง', data:d.monthly_trend.map(m=>d.records.filter(r=>r.month_start===m.month_start).reduce((a,r)=>a+(r.empty_bed_cost||0),0)), borderColor:COLORS.amber||'#c98a00', yAxisID:'y1', tension:.3 }
       ]},
     options:{ responsive:true, scales:{ y:{ position:'left' }, y1:{ position:'right', grid:{ drawOnChartArea:false } } } }
   });
@@ -517,8 +610,9 @@ function logout(){
   sessionStorage.removeItem('dash_actor'); ME=null;
   // renderLogin() wipes #app, taking the map's DOM container with it — drop the
   // stale Leaflet instance too or the next login would draw onto a detached map.
-  if (DASH_MAP) { DASH_MAP.remove(); DASH_MAP=null; DASH_HIGHLIGHT=null; }
+  if (DASH_MAP) { DASH_MAP.remove(); DASH_MAP=null; DASH_HIGHLIGHT=null; DASH_MEASURE=null; }
   DASH_BRANCHES=[]; DASH_HOTELS=[]; DASH_HOMES=[];
+  MEASURE_MODE=false; MEASURE_POINTS=[];
   renderLogin();
 }
 

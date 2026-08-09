@@ -1,5 +1,5 @@
 const { supabase } = require('../lib/supabase');
-const { json, fail } = require('../lib/http');
+const { json, fail, readBody } = require('../lib/http');
 
 // One call that the web app makes right after the employee is identified.
 // Returns who they are, what they're allowed to see, and every reference list
@@ -8,7 +8,15 @@ const { json, fail } = require('../lib/http');
 // GET /api/bootstrap?code=CMT2400114 — manual entry (normal browser)
 // GET /api/bootstrap?line_user_id=U...  — auto-login when opened inside LIFF,
 //   for an employee who already linked their account by chatting with มะม่วง
+//
+// POST /api/bootstrap { code, lat, lng } — the requirement doc's ยังไม่มีพิกัดบ้าน
+// empty-state: an employee sets/edits their own home location any time, no
+// admin involved (สรุป-requirement §12-13). Only action this endpoint has, so
+// no action field to check — self-service on purpose, only ever writes the
+// caller's own row (matched by code), never
+// someone else's.
 module.exports = async function handler(req, res) {
+  if (req.method === 'POST') return updateHome(req, res);
   if (req.method !== 'GET') return fail(res, 405, 'method not allowed');
 
   const code = (req.query.code || '').trim();
@@ -65,3 +73,14 @@ module.exports = async function handler(req, res) {
     constants: { mission_types: ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'] }
   });
 };
+
+async function updateHome(req, res) {
+  const body = readBody(req);
+  const code = (body.code || '').trim();
+  const lat = Number(body.lat), lng = Number(body.lng);
+  if (!code) return fail(res, 400, 'กรุณาใส่รหัสพนักงาน');
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return fail(res, 400, 'พิกัดไม่ถูกต้อง — ลองวางลิงก์ Google Maps อีกครั้ง');
+  const { error } = await supabase.from('employees').update({ home_lat: lat, home_lng: lng }).eq('code', code);
+  if (error) return fail(res, 500, error.message);
+  return json(res, 200, { ok: true, home_lat: lat, home_lng: lng });
+}
