@@ -34,8 +34,9 @@
   .kpi-sub{font-size:10.5px;color:var(--muted);margin-top:4px}
   .kpi.warn .kpi-value{color:var(--danger)}
   .charts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-  .charts .card{min-height:280px}
+  .charts .card{min-height:280px;min-width:0}
   .charts .full{grid-column:1/-1}
+  .charts canvas{max-width:100%;height:auto}
   .table-scroll{overflow-x:auto}
   @media (max-width:768px){
     .charts{grid-template-columns:1fr}
