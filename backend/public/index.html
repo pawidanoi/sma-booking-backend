@@ -1129,7 +1129,11 @@ function onScheduleFileChosen(evt){
 }
 
 function toIsoDateFromExcel(v){
-  if(v instanceof Date) return v.getUTCFullYear()+'-'+String(v.getUTCMonth()+1).padStart(2,'0')+'-'+String(v.getUTCDate()).padStart(2,'0');
+  // SheetJS's cellDates:true builds the Date from the serial number using the
+  // LOCAL-time constructor (new Date(y,m,d)), not UTC — so for any browser in
+  // a positive UTC-offset timezone (Thailand included), reading it back with
+  // getUTC*() rolls the date back by one. Local getters match how it was built.
+  if(v instanceof Date) return v.getFullYear()+'-'+String(v.getMonth()+1).padStart(2,'0')+'-'+String(v.getDate()).padStart(2,'0');
   return '';
 }
 
