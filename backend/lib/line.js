@@ -49,6 +49,7 @@ function mainMenuQuickReply() {
         qrPostback('📦 ดูสถานะการจอง', 'action=status'),
         qrPostback('🎫 ดูวอเชอร์อีกครั้ง', 'action=voucher'),
         qrPostback('🔁 ขอเปลี่ยนแปลง', 'action=change_menu'),
+        qrUri('📊 ดูแดชบอร์ด', dashboardLink()),
         qrPostback('❓ คำถามที่พบบ่อย', 'action=faq_menu'),
         qrPostback('🙋 คุยกับแอดมิน', 'action=escalate')
       ]
@@ -68,6 +69,20 @@ function menuButton(label, data, style) {
     color: style === 'primary' ? BRAND.red : undefined,
     height: 'sm'
   };
+}
+function menuButtonUri(label, uri, style) {
+  return {
+    type: 'button',
+    action: { type: 'uri', label, uri },
+    style: style || 'secondary',
+    color: style === 'primary' ? BRAND.red : undefined,
+    height: 'sm'
+  };
+}
+// Public dashboard link — plain page, not routed through the LIFF app (it works
+// fully logged-out, so it doesn't need the LIFF WebView's employee context).
+function dashboardLink() {
+  return `${process.env.PUBLIC_BASE_URL || 'https://sma-booking-backend.vercel.app'}/dashboard.html`;
 }
 function mainMenuFlex() {
   return {
@@ -90,6 +105,7 @@ function mainMenuFlex() {
             menuButton('📦 ดูสถานะการจอง', 'action=status'),
             menuButton('🎫 ดูวอเชอร์อีกครั้ง', 'action=voucher'),
             menuButton('🔁 ขอเปลี่ยนแปลง', 'action=change_menu'),
+            menuButtonUri('📊 ดูแดชบอร์ด', dashboardLink()),
             menuButton('❓ คำถามที่พบบ่อย', 'action=faq_menu'),
             menuButton('🙋 คุยกับแอดมิน', 'action=escalate')
           ]}

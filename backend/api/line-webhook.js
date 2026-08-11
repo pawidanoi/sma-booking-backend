@@ -202,9 +202,20 @@ async function onMessage(event) {
   const handled = await handleFlowMessage(event, employee);
   if (handled) return;
 
+  // LINE's Rich Menu (the always-visible tap bar under the chat) only renders on
+  // the mobile app — LINE for Windows/Mac desktop never shows it — so desktop
+  // users have no way to summon the menu except typing. A handful of obvious
+  // "show me the menu" words get it instantly with no scolding; anything else
+  // still gets the usual nudge back to buttons-only.
+  const MENU_WORDS = ['เมนู', 'menu', 'หน้าหลัก', 'home', 'สวัสดี', 'hi', 'hello'];
+  if (MENU_WORDS.includes(event.message.text.trim().toLowerCase())) {
+    await reply(event.replyToken, [mainMenuFlex()]);
+    return;
+  }
+
   // Enforced boundary: มะม่วงไม่รับพิมพ์อิสระ ไม่พยายามตีความข้อความ ส่งกลับไปที่เมนูเสมอ
   await reply(event.replyToken, [
-    { type: 'text', text: 'แหม่~ พิมพ์มามะม่วงอ่านไม่ออกหรอกนะคะ 😅 กดเลือกจากเมนูด้านล่างเลยจ้า จะได้ไม่พลาดข้อมูลด้วย' },
+    { type: 'text', text: 'แหม่~ พิมพ์มามะม่วงอ่านไม่ออกหรอกนะคะ 😅 กดเลือกจากเมนูด้านล่างเลยจ้า จะได้ไม่พลาดข้อมูลด้วย (พิมพ์ "เมนู" เรียกเมนูขึ้นมาใหม่ได้เสมอนะ)' },
     mainMenuFlex()
   ]);
 }

@@ -330,12 +330,11 @@ function pillOf(b){
 function updateRolebar(){
   const bar=$("#rolebar");
   if(!ME){ bar.innerHTML='ระบบจองที่พัก SMA · เข้าสู่ระบบด้วยรหัสพนักงาน'; return; }
-  // isSpecialRole() checks the same 4 positions the backend gates the dashboard on
-  // (SELF_SERVE_POSITIONS / isDashboardViewer) — 'แอดมิน' is already one of them.
-  const showDashboard = isSpecialRole(ME.position);
+  // Dashboard is public now (no login gate server-side) — show the link to everyone,
+  // not just admin/exec roles.
   bar.innerHTML = `สวัสดี <b>${esc(nickOf(ME))}</b> · ${esc(ME.team_code)} <span class="badge">${esc(IS_ADMIN?'แอดมิน':ME.position||'พนักงาน')}</span>
     <a onclick="openAdhocForm()">จองเพิ่ม</a>
-    ${showDashboard?'<a href="/dashboard.html" target="_blank">แดชบอร์ด</a>':''}
+    <a href="/dashboard.html" target="_blank">แดชบอร์ด</a>
     <a onclick="reloadBookings(true)">รีเฟรช</a>
     <a onclick="logout()">ออกจากระบบ</a>`;
 }
@@ -1398,6 +1397,35 @@ function renderScheduleFlowList(rows){
    </div></div>`;
 }
 
+async function renderAreaPendingSchedule(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAreaQueue()">‹</span><h1>งานของทีมที่ดูแล</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/admin-import?action=area_pending_schedule&actor='+encodeURIComponent(ME.code));
+    const order=['not_booked','awaiting_area','awaiting_admin','admin_processing','needs_fix','problem','done'];
+    const rows=d.rows||[];
+    const sorted=rows.slice().sort((a,b)=>(order.indexOf(a.stage)-order.indexOf(b.stage)) || (a.date_start<b.date_start?-1:1));
+    const counts={};
+    rows.forEach(r=>{ counts[r.stage]=(counts[r.stage]||0)+1; });
+    const summary = order.filter(s=>counts[s]).map(s=>`<span class="pill ${SCHEDULE_STAGE_INFO[s].cls}">${esc(SCHEDULE_STAGE_INFO[s].label)} ${counts[s]}</span>`).join(' ');
+    const listRows = sorted.map(r=>{
+      const info = SCHEDULE_STAGE_INFO[r.stage] || SCHEDULE_STAGE_INFO.unknown;
+      return `<div class="job">
+        <div class="g"><div class="t">${esc(r.branch_name)}</div>
+         <div class="s">${esc(r.team_code)} · ${fmtDate(r.date_start)}–${fmtDate(r.date_end)}</div>
+         <div style="margin-top:5px"><span class="pill ${info.cls}">${esc(info.label)}</span></div></div>
+       </div>`;
+    }).join('');
+    $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAreaQueue()">‹</span>
+      <div style="flex:1"><h1>งานของทีมที่ดูแล</h1><span class="sub">${rows.length} รายการ</span></div></div>
+     <div class="body">
+      <div class="hint">ดูว่ามีงานของทีมที่ดูแลค้างอยู่ขั้นไหนบ้าง — รวมงานที่ยังไม่มีคำขอเข้ามาเลย</div>
+      <div class="card" style="display:flex;gap:6px;flex-wrap:wrap">${summary}</div>
+      ${listRows||'<div class="hint">ไม่มีแผนงานสำหรับทีมที่ดูแล</div>'}
+     </div></div>`;
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAreaQueue(); }
+}
+
 async function remindSchedule(id,btn){
   btn.disabled=true; btn.textContent='กำลังส่ง...';
   try{
@@ -1738,7 +1766,10 @@ function renderAreaQueue(){
      <div><div class="val" style="color:var(--success)">${BOOKINGS.length-pending.length}</div><div class="label" style="margin:0">ผ่านไปแล้ว</div></div>
     </div></div>
     <div class="hint">ตรวจสอบความถูกต้องของพนักงานที่จะเข้าพัก ก่อนส่งต่อให้แอดมินจองจริง</div>
-    ${rows||'<div class="hint">ยังไม่มีคำขอรอตรวจ</div>'}</div></div>`;
+    ${rows||'<div class="hint">ยังไม่มีคำขอรอตรวจ</div>'}
+    <a class="navlink" onclick="renderAreaPendingSchedule()">ดูงานของทีมที่ดูแล — ค้างจองอะไรบ้าง</a>
+    <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
+   </div></div>`;
 }
 
 function renderAreaDetail(id){

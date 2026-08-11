@@ -1,6 +1,6 @@
 const { supabase } = require('../lib/supabase');
 const { json, fail, readBody } = require('../lib/http');
-const { getActor, isAdmin, AREA_APPROVER_POSITION } = require('../lib/auth');
+const { getActor, isAdmin, AREA_APPROVER_POSITION, isAreaApprover, getAreaTeamCodes } = require('../lib/auth');
 const { push, qrUri, qrPostback, liffLink } = require('../lib/line');
 
 // Vercel Hobby caps a deployment at 12 serverless functions — combines what
@@ -14,6 +14,14 @@ module.exports = async function handler(req, res) {
   const body = readBody(req);
   const actor = await getActor(req.query.actor || body.actor);
   if (!actor) return fail(res, 401, 'ไม่พบรหัสพนักงานผู้ใช้งาน');
+
+  // One carved-out action for AREA approvers — everything else in this file
+  // stays strictly admin-only, checked right below as before.
+  if (req.method === 'GET' && req.query.action === 'area_pending_schedule') {
+    if (!isAreaApprover(actor)) return fail(res, 403, 'เฉพาะผู้ตรวจอนุมัติพื้นที่เท่านั้น');
+    return areaPendingSchedule(res, actor);
+  }
+
   if (!isAdmin(actor)) return fail(res, 403, 'เฉพาะแอดมินเท่านั้น');
 
   if (req.method === 'GET') {
@@ -75,6 +83,15 @@ async function schedulePending(res) {
 
 // ---------------------------------------------------------------- schedule_flow — every schedule row's current pipeline stage
 
+const SCHEDULE_STAGE_BY_STATUS = {
+  'ส่งคำขอ': 'awaiting_area',
+  'อนุมัติพื้นที่แล้ว': 'awaiting_admin',
+  'ดำเนินการจอง': 'admin_processing',
+  'จองสำเร็จ': 'done',
+  'ต้องแก้ไข': 'needs_fix',
+  'ติดปัญหา': 'problem'
+};
+
 async function scheduleFlow(res) {
   const { data: schedule, error: schedErr } = await supabase
     .from('work_schedule')
@@ -91,14 +108,44 @@ async function scheduleFlow(res) {
   // edit updates in place, so this is never ambiguous in practice.
   const bookingByScheduleId = new Map((bookings || []).map((b) => [b.work_schedule_id, b]));
 
-  const STAGE_BY_STATUS = {
-    'ส่งคำขอ': 'awaiting_area',
-    'อนุมัติพื้นที่แล้ว': 'awaiting_admin',
-    'ดำเนินการจอง': 'admin_processing',
-    'จองสำเร็จ': 'done',
-    'ต้องแก้ไข': 'needs_fix',
-    'ติดปัญหา': 'problem'
-  };
+  const rows = (schedule || []).map((s) => {
+    const b = bookingByScheduleId.get(s.id);
+    return {
+      id: s.id,
+      team_code: s.team_code,
+      branch_name: s.branches?.name || s.branch_code,
+      date_start: s.date_start,
+      date_end: s.date_end,
+      stage: b ? (SCHEDULE_STAGE_BY_STATUS[b.status] || 'unknown') : 'not_booked',
+      booking_status: b ? b.status : null
+    };
+  });
+
+  return json(res, 200, { rows });
+}
+
+// ---------------------------------------------------------------- area_pending_schedule
+// Same shape as schedule_flow, but scoped to the teams this AREA approver
+// covers — lets them proactively check which of their teams' jobs still
+// haven't been requested at all, not just what's sitting in their own queue.
+
+async function areaPendingSchedule(res, actor) {
+  const teamCodes = await getAreaTeamCodes(actor.code);
+  if (!teamCodes.length) return json(res, 200, { rows: [] });
+
+  const { data: schedule, error: schedErr } = await supabase
+    .from('work_schedule')
+    .select('id, team_code, branch_code, date_start, date_end, branches(name)')
+    .in('team_code', teamCodes)
+    .order('date_start');
+  if (schedErr) return fail(res, 500, schedErr.message);
+
+  const { data: bookings, error: bookErr } = await supabase
+    .from('bookings')
+    .select('work_schedule_id, status, checkin_date')
+    .not('work_schedule_id', 'is', null);
+  if (bookErr) return fail(res, 500, bookErr.message);
+  const bookingByScheduleId = new Map((bookings || []).map((b) => [b.work_schedule_id, b]));
 
   const rows = (schedule || []).map((s) => {
     const b = bookingByScheduleId.get(s.id);
@@ -108,7 +155,7 @@ async function scheduleFlow(res) {
       branch_name: s.branches?.name || s.branch_code,
       date_start: s.date_start,
       date_end: s.date_end,
-      stage: b ? (STAGE_BY_STATUS[b.status] || 'unknown') : 'not_booked',
+      stage: b ? (SCHEDULE_STAGE_BY_STATUS[b.status] || 'unknown') : 'not_booked',
       booking_status: b ? b.status : null
     };
   });
@@ -388,9 +435,10 @@ async function branchProvinces(res) {
 }
 
 // ---------------------------------------------------------------- employee_home_import
-// (map feature groundwork, §4 bulk import from HR) — updates existing employees
-// only; never inserts, so a typo'd code just gets skipped instead of creating
-// a broken half-row.
+// (map feature groundwork, §4 bulk import from HR) — updates address fields on a
+// known employee; creates a new employee row when the code doesn't exist yet
+// (needs name + a valid team_code, since employees.team_code is a real FK —
+// missing either just skips that row with a reason instead of a half-row insert).
 
 async function employeeHomeImport(res, body) {
   const rows = Array.isArray(body.rows) ? body.rows : [];
@@ -400,31 +448,58 @@ async function employeeHomeImport(res, body) {
   if (exErr) return fail(res, 500, exErr.message);
   const knownCodes = new Set((existing || []).map((e) => e.code));
 
-  let updated = 0;
+  const { data: teams, error: teamErr } = await supabase.from('teams').select('code');
+  if (teamErr) return fail(res, 500, teamErr.message);
+  const knownTeamCodes = new Set((teams || []).map((t) => t.code));
+
+  const homeFields = (row) => {
+    const lat = row.home_lat === null || row.home_lat === undefined || row.home_lat === '' ? null : Number(row.home_lat);
+    const lng = row.home_lng === null || row.home_lng === undefined || row.home_lng === '' ? null : Number(row.home_lng);
+    return {
+      home_address: row.home_address || null,
+      home_subdistrict: row.home_subdistrict || null,
+      home_district: row.home_district || null,
+      home_province: row.home_province || null,
+      home_lat: Number.isFinite(lat) ? lat : null,
+      home_lng: Number.isFinite(lng) ? lng : null
+    };
+  };
+
+  let updated = 0, created = 0;
   const skipped = [];
   for (const row of rows) {
     const code = String(row.code || '').trim();
     if (!code) { skipped.push({ code, reason: 'ไม่มีรหัสพนักงาน' }); continue; }
-    if (!knownCodes.has(code)) { skipped.push({ code, reason: 'ไม่พบพนักงานนี้ในระบบ' }); continue; }
 
-    const lat = row.home_lat === null || row.home_lat === undefined || row.home_lat === '' ? null : Number(row.home_lat);
-    const lng = row.home_lng === null || row.home_lng === undefined || row.home_lng === '' ? null : Number(row.home_lng);
-    const { error } = await supabase
-      .from('employees')
-      .update({
-        home_address: row.home_address || null,
-        home_subdistrict: row.home_subdistrict || null,
-        home_district: row.home_district || null,
-        home_province: row.home_province || null,
-        home_lat: Number.isFinite(lat) ? lat : null,
-        home_lng: Number.isFinite(lng) ? lng : null
-      })
-      .eq('code', code);
+    if (knownCodes.has(code)) {
+      const { error } = await supabase.from('employees').update(homeFields(row)).eq('code', code);
+      if (error) { skipped.push({ code, reason: error.message }); continue; }
+      updated++;
+      continue;
+    }
+
+    const name = String(row.name || '').trim();
+    const teamCode = String(row.team_code || '').trim();
+    if (!name) { skipped.push({ code, reason: 'ไม่มีชื่อ — สร้างพนักงานใหม่ไม่ได้' }); continue; }
+    if (!teamCode || !knownTeamCodes.has(teamCode)) { skipped.push({ code, reason: `ไม่พบทีม "${teamCode || '(ว่าง)'}" — สร้างพนักงานใหม่ไม่ได้` }); continue; }
+
+    const gender = row.gender === 'M' || row.gender === 'F' ? row.gender : null;
+    const { error } = await supabase.from('employees').insert({
+      code,
+      name,
+      nickname: row.nickname || null,
+      team_code: teamCode,
+      gender,
+      phone: row.phone || null,
+      active: true,
+      ...homeFields(row)
+    });
     if (error) { skipped.push({ code, reason: error.message }); continue; }
-    updated++;
+    knownCodes.add(code);
+    created++;
   }
 
-  return json(res, 200, { ok: true, updated, skipped: skipped.length, skipped_detail: skipped });
+  return json(res, 200, { ok: true, updated, created, skipped: skipped.length, skipped_detail: skipped });
 }
 
 // ---------------------------------------------------------------- hotel_import
