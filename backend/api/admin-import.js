@@ -34,6 +34,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'backfill_hotel_codes') return backfillHotelCodes(res);
     if (body.action === 'area_assignment_save') return areaAssignmentSave(res, body);
     if (body.action === 'area_approver_add') return areaApproverAdd(res, body);
+    if (body.action === 'legacy_import') return legacyImport(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -600,6 +601,84 @@ async function areaAssignmentSave(res, body) {
   }
 
   return json(res, 200, { ok: true, team_codes: teamCodes });
+}
+
+// ---------------------------------------------------------------- legacy_import
+// Manual monthly-plan spreadsheets (per-branch rows, not per-guest bookings)
+// dropped straight into booking_legacy_summary as a stopgap snapshot — for
+// months the admin is still tracking on paper/Excel while the real bookings
+// get entered through the live flow. id is prefixed per import batch so a
+// later cleanup pass (once the matching live bookings exist) can find and
+// delete this exact batch with a single `id LIKE` query instead of guessing.
+
+async function legacyImport(res, body) {
+  const monthStart = String(body.month_start || '').trim();
+  const monthLabel = String(body.month_label || '').trim();
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  const batchTag = String(body.batch_tag || '').trim();
+  if (!monthStart || !monthLabel) return fail(res, 400, 'ไม่พบเดือนของข้อมูล');
+  if (!batchTag) return fail(res, 400, 'ไม่พบ batch_tag สำหรับ import นี้');
+  if (rows.length === 0) return fail(res, 400, 'ไม่พบแถวข้อมูล');
+
+  const valid = [];
+  const skipped = [];
+  rows.forEach((row, i) => {
+    const teamCode = String(row.team_code || '').trim();
+    const branchName = String(row.branch_name || '').trim();
+    const hotelName = String(row.hotel_name || '').trim();
+    const nights = Number(row.nights);
+    const rooms = Number(row.rooms);
+    const people = Number(row.people);
+    const pricePerRoomNight = Number(row.price_per_room_night);
+    const totalCost = Number(row.total_cost);
+    const emptyBeds = Number(row.empty_beds) || 0;
+    const reasons = [];
+    if (!teamCode) reasons.push('ไม่มีทีม');
+    if (!branchName) reasons.push('ไม่มีชื่อสาขา');
+    if (!hotelName) reasons.push('ไม่มีชื่อที่พัก');
+    if (!Number.isFinite(nights) || nights <= 0) reasons.push('จำนวนคืนไม่ถูกต้อง');
+    if (!Number.isFinite(people) || people <= 0) reasons.push('จำนวนคนไม่ถูกต้อง');
+    if (!Number.isFinite(totalCost)) reasons.push('ยอดรวมค่าใช้จ่ายไม่ถูกต้อง');
+
+    if (reasons.length) { skipped.push({ row: i + 1, reasons }); return; }
+
+    const personNights = people * nights;
+    valid.push({
+      id: `${batchTag}-${i + 1}`,
+      month_label: monthLabel,
+      month_start: monthStart,
+      src: teamCode.toUpperCase() === 'AREA' ? 'AREA' : 'SMA',
+      team_code: teamCode,
+      branch_code: row.branch_code || null,
+      branch_name: branchName,
+      hotel_name: hotelName,
+      checkin_date: row.checkin_date || null,
+      checkout_date: row.checkout_date || null,
+      nights,
+      rooms: Number.isFinite(rooms) ? rooms : null,
+      people,
+      male: Number.isFinite(Number(row.male)) ? Number(row.male) : null,
+      female: Number.isFinite(Number(row.female)) ? Number(row.female) : null,
+      capacity: people + emptyBeds,
+      empty_beds: emptyBeds,
+      price_per_room_night: Number.isFinite(pricePerRoomNight) ? pricePerRoomNight : null,
+      total_cost: totalCost,
+      person_nights: personNights,
+      baht_per_person_night: personNights > 0 ? Math.round((totalCost / personNights) * 100) / 100 : 0,
+      empty_bed_cost: Number.isFinite(pricePerRoomNight) ? Math.round((pricePerRoomNight / 2) * emptyBeds * nights * 100) / 100 : 0,
+      date_status: 'manual_snapshot',
+      needs_manual_fix: false
+    });
+  });
+
+  let inserted = 0;
+  if (valid.length > 0) {
+    const { error } = await supabase.from('booking_legacy_summary').insert(valid);
+    if (error) return fail(res, 500, error.message);
+    inserted = valid.length;
+  }
+
+  return json(res, 200, { ok: true, inserted, skipped: skipped.length, skipped_detail: skipped });
 }
 
 // ---------------------------------------------------------------- shared helpers
