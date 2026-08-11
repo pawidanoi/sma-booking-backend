@@ -643,12 +643,15 @@ async function legacyImport(res, body) {
     if (reasons.length) { skipped.push({ row: i + 1, reasons }); return; }
 
     const personNights = people * nights;
+    // teams.code is stored uppercase ("AREA") — the source spreadsheet's own
+    // casing ("Area") would otherwise violate the team_code foreign key.
+    const normalizedTeamCode = teamCode.toUpperCase() === 'AREA' ? 'AREA' : teamCode;
     valid.push({
       id: `${batchTag}-${i + 1}`,
       month_label: monthLabel,
       month_start: monthStart,
-      src: teamCode.toUpperCase() === 'AREA' ? 'AREA' : 'SMA',
-      team_code: teamCode,
+      src: normalizedTeamCode === 'AREA' ? 'AREA' : 'SMA',
+      team_code: normalizedTeamCode,
       branch_code: row.branch_code || null,
       branch_name: branchName,
       hotel_name: hotelName,
