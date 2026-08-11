@@ -2,13 +2,24 @@ const { supabase } = require('../lib/supabase');
 const { push, qrPostback, qrUri, liffLink } = require('../lib/line');
 
 // Runs daily via Vercel Cron (see vercel.json — 02:00 UTC = 09:00 Thailand time).
-// For every work_schedule row without a booking yet, push a reminder to the
-// team's two notify contacts (หัวหน้า + ผู้จองสำรอง) at 5 days out, then again
-// at 3 days out if still nothing — per the confirmed HANDOFF design.
+// Two independent stages:
+//   1) work_schedule-based — no booking exists yet, so this has to be keyed off
+//      the job's own date_start/advance_days (unchanged from the original design).
+//   2) bookings-based — the AREA-approval/admin/voucher stages below, keyed off
+//      the booking's own checkin_date (which can differ from the job's date_start).
 module.exports = async function handler(req, res) {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
+  const stage1 = await runStage1(today);
+  const stage2to4 = await runBookingStages(today);
+
+  res.status(200).json({ stage1, stage2to4 });
+};
+
+// ---------------------------------------------------------------- stage 1: remind employee to submit (day -5, -3)
+
+async function runStage1(today) {
   const { data: schedule } = await supabase
     .from('work_schedule')
     .select('id, team_code, branch_code, date_start, date_end, advance_days, branches(name)');
@@ -70,8 +81,84 @@ module.exports = async function handler(req, res) {
     results.push({ team: row.team_code, branch: branchName, daysUntil, recipients: recipients.length });
   }
 
-  res.status(200).json({ sent, results });
-};
+  return { sent, results };
+}
+
+// ---------------------------------------------------------------- stages 2-4: AREA approve / admin book / voucher
+
+async function runBookingStages(today) {
+  const { data: bookings } = await supabase
+    .from('bookings')
+    .select('id, team_code, branch_code, checkin_date, status, branches(name)')
+    .in('status', ['ส่งคำขอ', 'อนุมัติพื้นที่แล้ว', 'ดำเนินการจอง']);
+
+  const { data: assignments } = await supabase.from('area_team_assignments').select('area_employee_code, team_code');
+  const areaCodesByTeam = new Map();
+  (assignments || []).forEach((a) => {
+    if (!areaCodesByTeam.has(a.team_code)) areaCodesByTeam.set(a.team_code, []);
+    areaCodesByTeam.get(a.team_code).push(a.area_employee_code);
+  });
+
+  const { data: employees } = await supabase.from('employees').select('code, line_user_id, position');
+  const lineIdByEmployee = new Map((employees || []).map((e) => [e.code, e.line_user_id]));
+  const adminLineIds = (employees || [])
+    .filter((e) => e.position === 'แอดมิน')
+    .map((e) => e.line_user_id)
+    .filter(Boolean);
+
+  let sent = 0;
+  const results = [];
+
+  for (const b of bookings || []) {
+    const daysUntil = diffDays(today, new Date(b.checkin_date));
+    const branchName = b.branches?.name || b.branch_code;
+
+    // Stage 2 — AREA remind, day -4, soft nudge, only while still un-reviewed.
+    if (b.status === 'ส่งคำขอ' && daysUntil === 4) {
+      const areaCodes = areaCodesByTeam.get(b.team_code) || [];
+      const recipients = areaCodes.map((c) => lineIdByEmployee.get(c)).filter(Boolean);
+      if (recipients.length) {
+        await Promise.all(recipients.map((lineId) => push(lineId, [{
+          type: 'text',
+          text: `🔔 อีก 4 วันจะถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้วนะคะ ช่วยตรวจอนุมัติพื้นที่ให้ด้วยนะ 🥭`,
+          quickReply: { items: [qrUri('ตรวจเลย', liffLink('/home'))] }
+        }])));
+        sent += recipients.length;
+      }
+      results.push({ stage: 'area_remind', booking: b.id, recipients: recipients.length });
+    }
+
+    // Stage 3 — admin remind, day -3, must complete the Choowap booking.
+    // Soft gate: mentions AREA status but never blocks the reminder or the action.
+    if ((b.status === 'ส่งคำขอ' || b.status === 'อนุมัติพื้นที่แล้ว') && daysUntil === 3) {
+      const note = b.status === 'ส่งคำขอ' ? ' (ยังไม่ได้รับอนุมัติจากพื้นที่)' : '';
+      if (adminLineIds.length) {
+        await Promise.all(adminLineIds.map((lineId) => push(lineId, [{
+          type: 'text',
+          text: `📣 อีก 3 วันถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName}${note} รีบเริ่มดำเนินการจองบนชูวับด้วยนะคะ`,
+          quickReply: { items: [qrUri('เปิดคิว', liffLink('/home'))] }
+        }])));
+        sent += adminLineIds.length;
+      }
+      results.push({ stage: 'admin_remind', booking: b.id, recipients: adminLineIds.length });
+    }
+
+    // Stage 4 — voucher remind, day -1/-2, booked but voucher not attached yet.
+    if (b.status === 'ดำเนินการจอง' && (daysUntil === 1 || daysUntil === 2)) {
+      if (adminLineIds.length) {
+        await Promise.all(adminLineIds.map((lineId) => push(lineId, [{
+          type: 'text',
+          text: `🎫 อีก ${daysUntil} วันถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้ว ยังไม่เห็นวอเชอร์แนบเลยนะคะ`,
+          quickReply: { items: [qrUri('แนบวอเชอร์', liffLink('/home'))] }
+        }])));
+        sent += adminLineIds.length;
+      }
+      results.push({ stage: 'voucher_remind', booking: b.id, recipients: adminLineIds.length });
+    }
+  }
+
+  return { sent, results };
+}
 
 function addDays(dateStr, days) {
   const d = new Date(dateStr);

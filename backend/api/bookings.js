@@ -1,6 +1,6 @@
 const { supabase } = require('../lib/supabase');
 const { json, fail, readBody, roomsFor, nightsBetween, emptyBedsByGender } = require('../lib/http');
-const { getActor, isAdmin: checkIsAdmin } = require('../lib/auth');
+const { getActor, isAdmin: checkIsAdmin, isAreaApprover, getAreaTeamCodes, canAreaApprove } = require('../lib/auth');
 const { drivingDistance } = require('../lib/directions');
 
 const MISSION_TYPES = ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'];
@@ -28,6 +28,7 @@ const BOOKING_SELECT = `
   id, team_code, branch_code, work_schedule_id, checkin_date, checkout_date, status,
   reject_reason, chosen_hotel_choice_id, confirmation_no, voucher_file_url, voucher_storage_path, note,
   mission_type, mission_type_note, auto_approved, rule_violations,
+  area_approved_by, area_approved_at,
   created_by_employee, created_at, updated_at,
   branches ( name, province, lat, lng ),
   booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, unavailable_at, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
@@ -64,6 +65,12 @@ async function listBookings(req, res, actor, isAdmin) {
 
   if (scope === 'admin') {
     if (!isAdmin) return fail(res, 403, 'เฉพาะแอดมินเท่านั้น');
+  } else if (scope === 'area') {
+    if (!isAreaApprover(actor)) return fail(res, 403, 'เฉพาะผู้ตรวจอนุมัติพื้นที่เท่านั้น');
+    const teamCodes = await getAreaTeamCodes(actor.code);
+    // supabase-js's .in() with an empty array matches nothing correctly, but a
+    // sentinel keeps intent explicit rather than relying on that edge case.
+    q = q.in('team_code', teamCodes.length ? teamCodes : ['__none__']);
   } else if (scope === 'open_beds') {
     // Anyone can browse rooms with a spare bed to request joining — not admin-gated.
     q = q.in('status', ['ดำเนินการจอง', 'จองสำเร็จ']).gte('checkout_date', today);
@@ -214,7 +221,11 @@ async function createBooking(req, res, actor, body) {
     }
   }
   const autoApproved = ruleViolations.length === 0;
-  const initialStatus = autoApproved ? 'ดำเนินการจอง' : 'ส่งคำขอ';
+  // auto_approved/rule_violations are still computed and stored below purely as
+  // an informational hint for AREA/admin — every booking must land at ส่งคำขอ
+  // and go through AREA review (checks WHO is staying, not booking-rule
+  // compliance), so passing the automatic rule checks no longer skips that.
+  const initialStatus = 'ส่งคำขอ';
 
   const id = await nextBookingId();
   const { error: insErr } = await supabase.from('bookings').insert({
@@ -299,7 +310,7 @@ async function requestChange(req, res, actor, body) {
   const { data: bk } = await supabase.from('bookings').select('id, status').eq('id', booking_id).maybeSingle();
   if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
   // Confirmed rule: employees may only raise a change once the admin has started booking.
-  if (bk.status === 'ส่งคำขอ') return fail(res, 400, 'รอแอดมินเริ่มดำเนินการจองก่อน ถึงจะขอเปลี่ยนแปลงได้');
+  if (bk.status === 'ส่งคำขอ' || bk.status === 'อนุมัติพื้นที่แล้ว') return fail(res, 400, 'รอแอดมินเริ่มดำเนินการจองก่อน ถึงจะขอเปลี่ยนแปลงได้');
 
   const { error } = await supabase.from('booking_changes').insert({
     booking_id,
@@ -341,7 +352,7 @@ async function handlePatch(req, res, actor, isAdmin, body) {
   const { booking_id, action } = body;
   if (!booking_id) return fail(res, 400, 'ไม่ได้ระบุการจอง');
 
-  const { data: bk } = await supabase.from('bookings').select('id, status').eq('id', booking_id).maybeSingle();
+  const { data: bk } = await supabase.from('bookings').select('id, status, team_code').eq('id', booking_id).maybeSingle();
   if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
 
   const adminOnly = ['start_processing', 'choose_hotel', 'attach_voucher', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'cancel_booking', 'add_guest_admin', 'accept_join_request', 'dismiss_join_request', 'mark_hotel_unavailable', 'add_hotel_choice'];
@@ -426,6 +437,35 @@ async function handlePatch(req, res, actor, isAdmin, body) {
 
   if (action === 'reject') {
     const { reason } = body;
+    if (!reason || !String(reason).trim()) return fail(res, 400, 'ต้องกรอกเหตุผลที่ส่งกลับให้แก้ไข');
+    const { error } = await supabase
+      .from('bookings')
+      .update({ status: 'ต้องแก้ไข', reject_reason: String(reason).trim(), ...stamp })
+      .eq('id', booking_id);
+    if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'ต้องแก้ไข', actor.code);
+    return await respondFresh(res, booking_id);
+  }
+
+  // AREA approval stage — not in adminOnly, gated by canAreaApprove instead
+  // (role AND team-scope: an AREA approver may only act on bookings whose
+  // team is actually assigned to them). Soft gate: nothing here blocks
+  // start_processing from running on a not-yet-approved booking.
+  if (action === 'area_approve') {
+    if (!(await canAreaApprove(actor, bk.team_code))) return fail(res, 403, 'คุณไม่ได้รับสิทธิ์ตรวจอนุมัติพื้นที่ทีมนี้');
+    if (bk.status !== 'ส่งคำขอ') return fail(res, 400, 'การจองนี้ผ่านขั้นตรวจอนุมัติพื้นที่ไปแล้ว หรือเลยขั้นนี้ไปแล้ว');
+    const { error } = await supabase
+      .from('bookings')
+      .update({ status: 'อนุมัติพื้นที่แล้ว', area_approved_by: actor.code, area_approved_at: new Date().toISOString(), ...stamp })
+      .eq('id', booking_id);
+    if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'อนุมัติพื้นที่แล้ว', actor.code);
+    return await respondFresh(res, booking_id);
+  }
+
+  if (action === 'area_reject') {
+    const { reason } = body;
+    if (!(await canAreaApprove(actor, bk.team_code))) return fail(res, 403, 'คุณไม่ได้รับสิทธิ์ตรวจอนุมัติพื้นที่ทีมนี้');
     if (!reason || !String(reason).trim()) return fail(res, 400, 'ต้องกรอกเหตุผลที่ส่งกลับให้แก้ไข');
     const { error } = await supabase
       .from('bookings')

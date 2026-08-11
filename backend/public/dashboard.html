@@ -97,7 +97,7 @@ async function apiGet(path){
 function renderLogin(err){
   $("#app").innerHTML = `<div class="loginbox">
     <h2>แดชบอร์ดผู้บริหาร</h2>
-    <div class="hint">เข้าถึงได้เฉพาะผู้บริหาร/แอดมิน — ใส่รหัสพนักงานของคุณ</div>
+    <div class="hint">พนักงานทุกคนเข้าดูได้ — ใส่รหัสพนักงานของคุณ</div>
     <input id="code" placeholder="เช่น CMT2600940" onkeydown="if(event.key==='Enter')doLogin()"/>
     ${err?`<div class="err">${esc(err)}</div>`:''}
     <button onclick="doLogin()">เข้าดูแดชบอร์ด</button></div>`;
@@ -130,8 +130,8 @@ async function loadAndRender(){
     DASH_HOMES = d.employee_homes || [];
     renderDashboard(d);
   }catch(e){
-    // 403 here specifically means the logged-in code isn't a dashboard viewer position —
-    // distinct from a network/loading failure, so send them back to the login gate.
+    // Any failure here (bad/expired actor code, network issue) sends them
+    // back to the login gate rather than getting stuck on a half-loaded page.
     sessionStorage.removeItem('dash_actor');
     renderLogin(e.message);
   }

@@ -1,6 +1,6 @@
 const { supabase } = require('../lib/supabase');
 const { json, fail } = require('../lib/http');
-const { getActor, isDashboardViewer } = require('../lib/auth');
+const { getActor } = require('../lib/auth');
 const { decorate, BOOKING_SELECT } = require('./bookings');
 
 // Live data only exists from August 2026 onward — the legacy summary table covers
@@ -10,15 +10,14 @@ const LIVE_PERIOD_START = '2026-08-01';
 
 // GET /api/dashboard-summary?actor=CODE&from=2026-03-01&to=2026-08-31
 //
-// Gated on isDashboardViewer (ผู้บริหาร/แอดมิน/the two named manager titles) — NOT
-// isAdmin, which excludes ผู้บริหาร (the actual target audience for this dashboard).
+// Open to any logged-in employee (confirmed) — no longer gated to
+// ผู้บริหาร/แอดมิน/the two named manager titles.
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return fail(res, 405, 'method not allowed');
 
   const actorCode = (req.query.actor || '').trim();
   const actor = await getActor(actorCode);
   if (!actor) return fail(res, 401, 'ไม่พบรหัสพนักงานผู้ใช้งาน — เข้าสู่ระบบอีกครั้ง');
-  if (!isDashboardViewer(actor)) return fail(res, 403, 'เฉพาะผู้บริหาร/แอดมินเท่านั้น');
 
   try {
     const from = req.query.from || '2026-03-01';

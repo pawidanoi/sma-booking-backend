@@ -130,10 +130,13 @@
 
 const API = '/api';
 const SPECIAL_POS = ["ผู้บริหาร","แอดมิน","Sales & Marketing Division Manager","หัวหน้าแผนกกิจกรรมร้านค้า"];
+// Mirrors lib/auth.js's AREA_APPROVER_POSITION — a person's job position,
+// distinct from teams.code==='AREA' (an actual team, unrelated concept).
+const AREA_APPROVER_POSITION = "ผู้ตรวจอนุมัติพื้นที่";
 const THMONTH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 
 /* ---------------- reference data (filled by /api/bootstrap) ---------------- */
-let ME = null, IS_ADMIN = false;
+let ME = null, IS_ADMIN = false, IS_AREA_APPROVER = false;
 let BRANCHES = [], HOTELS = [], TEAMS = [], STAFF_LIST = [], SCHEDULE = [];
 let STAFF = {}, BRANCH_BY_CODE = {}, PROVINCES = [];
 let BOOKINGS = [];
@@ -283,6 +286,7 @@ function normBooking(b){
     status:b.status, rejectReason:b.reject_reason, note:b.note||'',
     missionType:b.mission_type||null, missionNote:b.mission_type_note||null,
     autoApproved:!!b.auto_approved, ruleViolations:b.rule_violations||[],
+    areaApprovedBy:b.area_approved_by||null, areaApprovedAt:b.area_approved_at||null,
     submittedByCode:b.created_by_employee, adhoc: !b.work_schedule_id,
     src: b.team_code==='AREA' ? 'AREA' : 'SMA',
     hotels: choices,
@@ -318,6 +322,7 @@ function pillOf(b){
   if(b.status==='จองสำเร็จ') return '<span class="pill ok">จองเสร็จแล้ว</span>';
   if(b.status==='ติดปัญหา') return '<span class="pill soon">ติดปัญหา</span>';
   if(b.status==='ดำเนินการจอง') return '<span class="pill wait">ดำเนินการจอง</span>';
+  if(b.status==='อนุมัติพื้นที่แล้ว') return '<span class="pill ok">อนุมัติพื้นที่แล้ว</span>';
   return '<span class="pill wait">ส่งคำขอ</span>';
 }
 
@@ -337,7 +342,7 @@ function updateRolebar(){
 
 /* ---------------- login ---------------- */
 function renderLogin(err){
-  ME=null; IS_ADMIN=false; BOOKINGS=[]; updateRolebar();
+  ME=null; IS_ADMIN=false; IS_AREA_APPROVER=false; BOOKINGS=[]; updateRolebar();
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>เข้าใช้งาน</h1></div>
    <div class="body"><div class="card"><div class="label">รหัสพนักงานของคุณ</div>
     <input class="txt" id="code" placeholder="เช่น CMT2400114" autocomplete="off" onkeydown="if(event.key==='Enter')doLogin()"/>
@@ -364,6 +369,7 @@ async function doLogin(){
 async function applyBootstrap(d){
   ME = d.me;
   IS_ADMIN = ME.position==='แอดมิน';
+  IS_AREA_APPROVER = ME.position===AREA_APPROVER_POSITION;
   BRANCHES = d.branches||[];
   HOTELS = (d.hotels||[]).map(normHotel);
   TEAMS = (d.teams||[]).map(t=>t.code);
@@ -401,7 +407,8 @@ async function tryLiffAutoLogin(){
 async function reloadBookings(showToast){
   if(!ME) return;
   try{
-    const d = await apiGet('/bookings?scope='+(IS_ADMIN?'admin':'mine')+'&actor='+encodeURIComponent(ME.code));
+    const scope = IS_ADMIN ? 'admin' : (IS_AREA_APPROVER ? 'area' : 'mine');
+    const d = await apiGet('/bookings?scope='+scope+'&actor='+encodeURIComponent(ME.code));
     BOOKINGS = (d.bookings||[]).map(normBooking);
     if(showToast){ toast('อัปเดตข้อมูลล่าสุดแล้ว'); goHome(); }
   }catch(e){
@@ -411,6 +418,7 @@ async function reloadBookings(showToast){
 
 function goHome(){
   if(IS_ADMIN) renderAdminQueue();
+  else if(IS_AREA_APPROVER) renderAreaQueue();
   else if(isSpecialRole(ME.position)) renderSpecialHome();
   else renderHome();
 }
@@ -998,7 +1006,7 @@ async function applyChange(){
 
 /* ================= แอดมิน ================= */
 function renderAdminQueue(){
-  const order={'ส่งคำขอ':0,'ดำเนินการจอง':1,'ติดปัญหา':2,'ต้องแก้ไข':3,'จองสำเร็จ':4};
+  const order={'ส่งคำขอ':0,'อนุมัติพื้นที่แล้ว':1,'ดำเนินการจอง':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
   const sorted=BOOKINGS.slice().sort((a,b)=>{
     const aFlag=a.change||(a.joinRequests&&a.joinRequests.length), bFlag=b.change||(b.joinRequests&&b.joinRequests.length);
     if(aFlag && !bFlag) return -1;
@@ -1017,7 +1025,7 @@ function renderAdminQueue(){
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
       <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${autoBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
-  const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ').length;
+  const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ'||b.status==='อนุมัติพื้นที่แล้ว').length;
   const flagged=BOOKINGS.filter(b=>b.change).length;
   $("#app").innerHTML=`<div class="screen"><div class="appbar">
     <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
@@ -1026,7 +1034,8 @@ function renderAdminQueue(){
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderPendingSchedule()">แผนงานที่ยังไม่จอง</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderPendingSchedule()">แผนงานที่ยังไม่จอง</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderAreaAssignments()">ผู้ตรวจอนุมัติพื้นที่</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -1046,6 +1055,7 @@ async function adminAction(bookingId, action, extra, okMsg, after){
   }catch(e){ toast(e.message); }
 }
 function chooseHotel(id,choiceId){ adminAction(id,'choose_hotel',{ choice_id:choiceId },null); }
+function areaApprove(id){ adminAction(id,'area_approve',null,'อนุมัติพื้นที่แล้ว ✓',()=>rerender(renderAreaQueue)); }
 function markHotelUnavailable(id,choiceId){ adminAction(id,'mark_hotel_unavailable',{ choice_id:choiceId },'บันทึกว่าที่พักนี้จองไม่ได้ — ดูที่พักที่แนะนำเพิ่มด้านล่าง'); }
 function addHotelChoiceForBooking(id,hotelCode){
   const hotelId = hotelIdByCode(hotelCode);
@@ -1290,6 +1300,49 @@ function renderPendingScheduleList(pending){
    </div></div>`;
 }
 
+async function renderAreaAssignments(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>ผู้ตรวจอนุมัติพื้นที่</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/admin-import?action=area_assignments&actor='+encodeURIComponent(ME.code));
+    renderAreaAssignmentsList(d.approvers||[], d.teams||[]);
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+
+function renderAreaAssignmentsList(approvers, teams){
+  const cards = approvers.map(a=>{
+    const boxes = teams.map(t=>{
+      const cid = `area_${esc(a.code)}_${esc(t.code)}`;
+      const checked = a.team_codes.includes(t.code) ? 'checked' : '';
+      return `<label style="display:flex;align-items:center;gap:6px;font-size:12.5px">
+        <input type="checkbox" id="${cid}" value="${esc(t.code)}" ${checked}/>${esc(t.code)}</label>`;
+    }).join('');
+    return `<div class="card">
+      <div class="label">${esc(a.nickname||a.name)} <span class="hint" style="display:inline">(${esc(a.code)})</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:8px;margin:8px 0">${boxes}</div>
+      <button class="btn ghost" onclick="saveAreaAssignment('${esc(a.code)}',this)">บันทึก</button>
+    </div>`;
+  }).join('');
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+    <div style="flex:1"><h1>ผู้ตรวจอนุมัติพื้นที่</h1><span class="sub">เลือกทีมที่แต่ละคนดูแล</span></div></div>
+   <div class="body">
+    <div class="hint">คนที่จะขึ้นในหน้านี้ต้องตั้งตำแหน่ง (position) เป็น "${esc(AREA_APPROVER_POSITION)}" ในทะเบียนพนักงานก่อน</div>
+    ${cards||'<div class="hint">ยังไม่มีพนักงานที่ตั้งตำแหน่งเป็นผู้ตรวจอนุมัติพื้นที่</div>'}
+   </div></div>`;
+}
+
+async function saveAreaAssignment(code, btn){
+  const boxes = [...document.querySelectorAll(`input[id^="area_${code}_"]`)];
+  const teamCodes = boxes.filter(b=>b.checked).map(b=>b.value);
+  btn.disabled=true; btn.textContent='กำลังบันทึก...';
+  try{
+    await apiSend('/admin-import','POST',{ action:'area_assignment_save', area_employee_code:code, team_codes:teamCodes });
+    toast('บันทึกแล้ว ✓');
+    btn.textContent='บันทึก';
+  }catch(e){ toast(e.message); btn.textContent='บันทึก'; }
+  btn.disabled=false;
+}
+
 async function remindSchedule(id,btn){
   btn.disabled=true; btn.textContent='กำลังส่ง...';
   try{
@@ -1460,9 +1513,10 @@ function renderCheckedIn(){
    <div class="body">${rows||'<div class="hint">วันนี้ไม่มีใครเข้าพักอยู่</div>'}</div></div>`;
 }
 
-function renderReject(id){
-  REJ={ id, reason:'', busy:false };
-  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminDetail('${id}')">‹</span><h1>ส่งกลับให้แก้ไข</h1></div>
+function renderReject(id, opts){
+  opts = opts || { action:'reject', backOnclick:`renderAdminDetail('${esc(id)}')`, afterTo:renderAdminQueue, title:'ส่งกลับให้แก้ไข' };
+  REJ={ id, reason:'', busy:false, opts };
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="${opts.backOnclick}">‹</span><h1>${esc(opts.title)}</h1></div>
    <div class="body"><div class="card"><div class="label">เหตุผลที่ส่งกลับให้พนักงานแก้ไข</div>
     <textarea class="txt" placeholder="เช่น ข้อมูลผู้เข้าพักไม่ครบ / เลือกที่พักผิดจังหวัด" oninput="REJ.reason=this.value">${esc(REJ.reason||'')}</textarea></div>
     <button class="btn danger" onclick="confirmReject()">ส่งกลับให้พนักงาน</button></div></div>`;
@@ -1470,12 +1524,13 @@ function renderReject(id){
 async function confirmReject(){
   if(!REJ.reason||!REJ.reason.trim()){ toast('กรอกเหตุผลก่อน'); return; }
   try{
-    await apiSend('/bookings','PATCH',{ booking_id:REJ.id, action:'reject', reason:REJ.reason });
+    await apiSend('/bookings','PATCH',{ booking_id:REJ.id, action:REJ.opts.action, reason:REJ.reason });
     toast('ส่งกลับให้พนักงานแก้ไขแล้ว');
     await reloadBookings(false);
-    setTimeout(renderAdminQueue,400);
+    setTimeout(REJ.opts.afterTo,400);
   }catch(e){ toast(e.message); }
 }
+function areaReject(id){ renderReject(id, { action:'area_reject', backOnclick:`renderAreaDetail('${esc(id)}')`, afterTo:renderAreaQueue, title:'ส่งกลับให้แก้ไข (พื้นที่)' }); }
 
 function renderAdminDetail(id){
   const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); renderAdminQueue(); return; }
@@ -1557,13 +1612,16 @@ function renderAdminDetail(id){
     <button class="btn ghost" style="margin-top:8px" onclick="rejectJoin('${b.id}','${jr.id}')">ไม่อนุมัติ</button></div>`).join("");
   const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
   const approvalBanner = b.autoApproved
-    ? `<div class="warn g">✓ ผ่านกฎอัตโนมัติ — ข้ามขั้นตรวจแล้ว</div>`
+    ? `<div class="warn g">✓ ผ่านกฎอัตโนมัติ (ข้อมูลอ้างอิง — ยังต้องผ่านอนุมัติพื้นที่/แอดมินตามปกติ)</div>`
     : (b.ruleViolations&&b.ruleViolations.length ? `<div class="warn a">⚠️ ไม่ผ่านอนุมัติอัตโนมัติ: ${b.ruleViolations.map(esc).join(' · ')}</div>` : '');
+  const areaBanner = b.areaApprovedAt
+    ? `<div class="warn g">✓ อนุมัติพื้นที่แล้ว โดย ${esc(b.areaApprovedBy||'')}</div>`
+    : (b.status==='ส่งคำขอ' ? `<div class="warn a">⚠️ ยังไม่ได้รับอนุมัติจากพื้นที่ — กดเริ่มดำเนินการจองได้ตามปกติถ้าจำเป็น</div>` : '');
   const adminVoucherLink = b.voucher && (b.voucher.storagePath ? ('/api/voucher-redirect?booking_id='+encodeURIComponent(b.id)) : b.voucher.url);
   const voucherShown = b.status==='จองสำเร็จ' ? `<div class="card"><div class="label">วอเชอร์ที่ส่งแล้ว</div>
      <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc((b.voucher&&b.voucher.code)||'—')}</span></div>
      ${adminVoucherLink?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(adminVoucherLink)}" target="_blank" rel="noopener">เปิด</a></span></div>`:''}</div>` : '';
-  const actions = b.status==='ส่งคำขอ'
+  const actions = (b.status==='ส่งคำขอ'||b.status==='อนุมัติพื้นที่แล้ว')
     ? `<button class="btn" onclick="startProcessing('${b.id}')">เริ่มดำเนินการจอง</button>
        <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
     : (b.status==='จองสำเร็จ'
@@ -1585,7 +1643,7 @@ function renderAdminDetail(id){
      <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
      ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
      ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
-    ${rejectBanner}${approvalBanner}${changeBox}${joinBox}
+    ${rejectBanner}${approvalBanner}${areaBanner}${changeBox}${joinBox}
     <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
      <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
      <div class="roomgrid">${rc}</div></div>
@@ -1599,6 +1657,105 @@ function renderAdminDetail(id){
     ${voucherShown}
     ${actions}</div></div>`;
   renderAdminMap(b, suggestions);
+}
+
+/* ================= ผู้ตรวจอนุมัติพื้นที่ (AREA) ================= */
+// BOOKINGS is already server-filtered to this approver's assigned teams
+// (scope=area in reloadBookings), so this queue is just renderAdminQueue's
+// list-card pattern reused as-is with a narrower title and no admin-only links.
+function renderAreaQueue(){
+  const order={'ส่งคำขอ':0,'อนุมัติพื้นที่แล้ว':1,'ดำเนินการจอง':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
+  const pending = BOOKINGS.filter(b=>b.status==='ส่งคำขอ');
+  const sorted=BOOKINGS.slice().sort((a,b)=>(order[a.status]??9)-(order[b.status]??9));
+  const rows=sorted.map(b=>{
+    const d=b.derived||{};
+    return `<div class="job" onclick="renderAreaDetail('${b.id}')">
+     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
+     <div class="g"><div class="t">${esc(b.branch)}</div>
+      <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
+      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${pillOf(b)}</div></div><div class="chev">›</div></div>`;
+  }).join("");
+  $("#app").innerHTML=`<div class="screen"><div class="appbar">
+    <div style="flex:1"><h1>รอตรวจอนุมัติพื้นที่</h1><span class="sub">${esc(nickOf(ME))} · ${BOOKINGS.length} รายการ</span></div></div>
+   <div class="body">
+    <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
+     <div><div class="val" style="color:var(--amber)">${pending.length}</div><div class="label" style="margin:0">รอตรวจ</div></div>
+     <div><div class="val" style="color:var(--success)">${BOOKINGS.length-pending.length}</div><div class="label" style="margin:0">ผ่านไปแล้ว</div></div>
+    </div></div>
+    <div class="hint">ตรวจสอบความถูกต้องของพนักงานที่จะเข้าพัก ก่อนส่งต่อให้แอดมินจองจริง</div>
+    ${rows||'<div class="hint">ยังไม่มีคำขอรอตรวจ</div>'}</div></div>`;
+}
+
+function renderAreaDetail(id){
+  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); renderAreaQueue(); return; }
+  const guests=bookingGuestList(id);
+  const rooms=pair(guests);
+  const nights=daysBetween(b.checkin,b.checkout)||1;
+  const hasBCoords = hasBranchCoords(b);
+  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, {
+    _km: (hasBCoords && h.lat!=null) ? haversine(b.blat,b.blng,h.lat,h.lng) : null
+  }));
+  const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
+    : h.custom ? 'ที่พักใหม่' : esc(h.near||'-');
+  const rc=rooms.map((r,k)=>{
+    const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
+    const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
+    return `<div class="room ${r.g}"><div class="rh"><span>ห้อง ${k+1}</span><span>${r.g==='f'?'หญิง':'ชาย'}</span></div><div class="oc">${nm}</div>${e}</div>`;
+  }).join("");
+  const guestRows=guests.map(g=>`<div class="guestcard">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="gt ${g.g}">${g.g==='f'?'ญ':'ช'}</span><strong style="font-size:12px">${esc(g.team||'')}</strong></div>
+    <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span></div>
+    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')}</span></div>
+    <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span></div>
+   </div>`).join("");
+  // Read-only — picking/marking-unavailable a hotel is the admin's job, AREA
+  // only needs to see the branch<->hotel distance to judge the roster.
+  const hotelRows=hotelsWithDist.map(h=>{
+    const provTag = h.prov && h.prov!==b.prov ? ` · จ.${esc(h.prov)}` : '';
+    const strike = h.unavailable ? 'text-decoration:line-through;opacity:.55' : '';
+    return `<div class="hotel radio ${b.chosenChoiceId===h.id?'sel':''}">
+      <div class="chk">${b.chosenChoiceId===h.id?'✓':''}</div>
+      <div class="n"><div class="t" style="${strike}">${esc(h.name)}</div><div class="s">${h.unavailable?'จองไม่ได้ (เต็ม)':hotelSubtitle(h)}${provTag}</div></div>
+      <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
+  }).join("");
+  const mapCard = (hasBCoords || hotelsWithDist.some(h=>h.lat!=null)) ? `<div class="card" style="padding:10px">
+    <div class="label" style="margin-bottom:8px">แผนที่ตำแหน่ง</div>
+    <div id="adminMap" style="height:220px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--muted)">
+      ${hasBCoords?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--brand);margin-right:4px"></span>สาขา</span>`:''}
+      <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);margin-right:4px"></span>ที่พักที่เลือกไว้</span>
+    </div></div>` : '';
+  const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
+  // Reuses the same rule_violations text the admin screen shows — the
+  // home-distance-rule figure (บ้าน↔สาขา) already lives there when it's
+  // close enough to matter, which is exactly the case AREA most needs flagged.
+  const ruleBanner = (b.ruleViolations&&b.ruleViolations.length) ? `<div class="warn a">⚠️ ${b.ruleViolations.map(esc).join(' · ')}</div>` : '';
+  const areaBanner = b.areaApprovedAt ? `<div class="warn g">✓ อนุมัติพื้นที่แล้ว โดย ${esc(b.areaApprovedBy||'')}</div>` : '';
+  const actions = b.status==='ส่งคำขอ'
+    ? `<button class="btn" onclick="areaApprove('${b.id}')">อนุมัติ — ส่งต่อให้แอดมินจอง</button>
+       <button class="btn danger" style="margin-top:8px" onclick="areaReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
+    : '';
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAreaQueue()">‹</span>
+    <div style="flex:1"><h1>ตรวจอนุมัติพื้นที่</h1><span class="sub">${esc(b.team)} · ${esc(b.branch)}</span></div></div>
+   <div class="body">
+    <div class="card"><div class="label">สรุปคำขอ${b.adhoc?' · <span class="pill wait">จองเพิ่ม (นอกแผนงาน)</span>':''}</div>
+     <div class="copyrow"><span class="k">เลขที่</span><span class="v">${esc(b.id)}</span></div>
+     <div class="copyrow"><span class="k">ทีม</span><span class="v">${esc(b.team)}</span></div>
+     <div class="copyrow"><span class="k">สาขา</span><span class="v">${esc(b.branch)}${b.prov?' · จ.'+esc(b.prov):''}</span></div>
+     <div class="copyrow"><span class="k">เช็คอิน–เอาท์</span><span class="v">${fmtDate(b.checkin)} – ${fmtDate(b.checkout)} (${nights} คืน)</span></div>
+     <div class="copyrow"><span class="k">ห้อง</span><span class="v">${rooms.length} ห้อง</span></div>
+     <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
+     ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
+     ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
+    ${rejectBanner}${ruleBanner}${areaBanner}
+    <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
+     <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
+     <div class="roomgrid">${rc}</div></div>
+    <div class="card"><div class="label">รหัส · ชื่อ · เบอร์</div>${guestRows}</div>
+    ${mapCard}
+    <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้</div>${hotelRows}</div>
+    ${actions}</div></div>`;
+  renderAdminMap(b, []);
 }
 
 function copyTxt(t){

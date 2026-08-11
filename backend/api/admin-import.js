@@ -1,6 +1,6 @@
 const { supabase } = require('../lib/supabase');
 const { json, fail, readBody } = require('../lib/http');
-const { getActor, isAdmin } = require('../lib/auth');
+const { getActor, isAdmin, AREA_APPROVER_POSITION } = require('../lib/auth');
 const { push, qrUri, qrPostback, liffLink } = require('../lib/line');
 
 // Vercel Hobby caps a deployment at 12 serverless functions — combines what
@@ -19,6 +19,7 @@ module.exports = async function handler(req, res) {
   if (req.method === 'GET') {
     if (req.query.action === 'schedule_pending') return schedulePending(res);
     if (req.query.action === 'branch_provinces') return branchProvinces(res);
+    if (req.query.action === 'area_assignments') return areaAssignmentsList(res);
     return fail(res, 400, `ไม่รู้จัก action: ${req.query.action}`);
   }
 
@@ -30,6 +31,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'employee_home_import') return employeeHomeImport(res, body);
     if (body.action === 'hotel_import') return hotelImport(res, body);
     if (body.action === 'backfill_hotel_codes') return backfillHotelCodes(res);
+    if (body.action === 'area_assignment_save') return areaAssignmentSave(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -488,6 +490,60 @@ async function backfillHotelCodes(res) {
   }
 
   return json(res, 200, { ok: true, updated, failed: failed.length, failed_detail: failed });
+}
+
+// ---------------------------------------------------------------- area_team_assignments (AREA approval stage)
+
+async function areaAssignmentsList(res) {
+  const { data: approvers, error: empErr } = await supabase
+    .from('employees')
+    .select('code, name, nickname')
+    .eq('position', AREA_APPROVER_POSITION)
+    .eq('active', true);
+  if (empErr) return fail(res, 500, empErr.message);
+
+  const { data: assignments, error: asgErr } = await supabase.from('area_team_assignments').select('area_employee_code, team_code');
+  if (asgErr) return fail(res, 500, asgErr.message);
+
+  const { data: teams, error: teamErr } = await supabase.from('teams').select('code, name').order('code');
+  if (teamErr) return fail(res, 500, teamErr.message);
+
+  const teamCodesByEmp = new Map();
+  (assignments || []).forEach((a) => {
+    if (!teamCodesByEmp.has(a.area_employee_code)) teamCodesByEmp.set(a.area_employee_code, []);
+    teamCodesByEmp.get(a.area_employee_code).push(a.team_code);
+  });
+
+  const rows = (approvers || []).map((e) => ({
+    code: e.code, name: e.name, nickname: e.nickname, team_codes: teamCodesByEmp.get(e.code) || []
+  }));
+
+  return json(res, 200, { approvers: rows, teams: teams || [] });
+}
+
+async function areaAssignmentSave(res, body) {
+  const code = String(body.area_employee_code || '').trim();
+  const teamCodes = Array.isArray(body.team_codes) ? body.team_codes : [];
+  if (!code) return fail(res, 400, 'ไม่ได้ระบุผู้ตรวจอนุมัติพื้นที่');
+
+  const { data: emp, error: empErr } = await supabase.from('employees').select('code, position').eq('code', code).maybeSingle();
+  if (empErr) return fail(res, 500, empErr.message);
+  if (!emp) return fail(res, 400, 'ไม่พบพนักงานนี้');
+  if (emp.position !== AREA_APPROVER_POSITION) return fail(res, 400, 'พนักงานนี้ยังไม่ได้ตั้งตำแหน่งเป็นผู้ตรวจอนุมัติพื้นที่');
+
+  // Replace the whole set every save — simpler and safer than diffing, and
+  // the set per approver is always small (a handful of teams at most).
+  const { error: delErr } = await supabase.from('area_team_assignments').delete().eq('area_employee_code', code);
+  if (delErr) return fail(res, 500, delErr.message);
+
+  if (teamCodes.length) {
+    const { error: insErr } = await supabase
+      .from('area_team_assignments')
+      .insert(teamCodes.map((t) => ({ area_employee_code: code, team_code: t })));
+    if (insErr) return fail(res, 500, insErr.message);
+  }
+
+  return json(res, 200, { ok: true, team_codes: teamCodes });
 }
 
 // ---------------------------------------------------------------- shared helpers
