@@ -1035,7 +1035,8 @@ function renderAdminQueue(){
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderPendingSchedule()">แผนงานที่ยังไม่จอง</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderAreaAssignments()">ผู้ตรวจอนุมัติพื้นที่</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderAreaAssignments()">ผู้ตรวจอนุมัติพื้นที่</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleFlow()">ภาพรวมทุกแผนงาน</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -1326,9 +1327,21 @@ function renderAreaAssignmentsList(approvers, teams){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
     <div style="flex:1"><h1>ผู้ตรวจอนุมัติพื้นที่</h1><span class="sub">เลือกทีมที่แต่ละคนดูแล</span></div></div>
    <div class="body">
-    <div class="hint">คนที่จะขึ้นในหน้านี้ต้องตั้งตำแหน่ง (position) เป็น "${esc(AREA_APPROVER_POSITION)}" ในทะเบียนพนักงานก่อน</div>
+    <div class="card"><div class="label">เพิ่มผู้ตรวจอนุมัติพื้นที่ใหม่</div>
+     <input class="txt" id="newAreaCode" placeholder="รหัสพนักงาน เช่น CMT2400114"/>
+     <button class="btn ghost" style="margin-top:8px" onclick="addAreaApprover()">เพิ่ม</button></div>
     ${cards||'<div class="hint">ยังไม่มีพนักงานที่ตั้งตำแหน่งเป็นผู้ตรวจอนุมัติพื้นที่</div>'}
    </div></div>`;
+}
+
+async function addAreaApprover(){
+  const code = ($("#newAreaCode").value||'').trim();
+  if(!code){ toast('กรอกรหัสพนักงานก่อน'); return; }
+  try{
+    await apiSend('/admin-import','POST',{ action:'area_approver_add', area_employee_code:code });
+    toast('เพิ่มแล้ว ✓ — เลือกทีมที่ดูแลด้านล่างแล้วกดบันทึก');
+    renderAreaAssignments();
+  }catch(e){ toast(e.message); }
 }
 
 async function saveAreaAssignment(code, btn){
@@ -1341,6 +1354,48 @@ async function saveAreaAssignment(code, btn){
     btn.textContent='บันทึก';
   }catch(e){ toast(e.message); btn.textContent='บันทึก'; }
   btn.disabled=false;
+}
+
+const SCHEDULE_STAGE_INFO = {
+  not_booked:      { label:'พนักงานยังไม่จอง',        cls:'wait' },
+  awaiting_area:   { label:'รอ AREA อนุมัติ',          cls:'wait' },
+  awaiting_admin:  { label:'อนุมัติพื้นที่แล้ว — รอแอดมิน', cls:'ok' },
+  admin_processing:{ label:'แอดมินกำลังจอง',           cls:'ok' },
+  done:            { label:'จองสำเร็จ',                cls:'ok' },
+  needs_fix:       { label:'ต้องแก้ไข',                cls:'soon' },
+  problem:         { label:'ติดปัญหา',                 cls:'soon' },
+  unknown:         { label:'ไม่ทราบสถานะ',             cls:'wait' }
+};
+
+async function renderScheduleFlow(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>ภาพรวมทุกแผนงาน</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/admin-import?action=schedule_flow&actor='+encodeURIComponent(ME.code));
+    renderScheduleFlowList(d.rows||[]);
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+
+function renderScheduleFlowList(rows){
+  const order=['awaiting_area','not_booked','awaiting_admin','admin_processing','needs_fix','problem','done'];
+  const sorted=rows.slice().sort((a,b)=>(order.indexOf(a.stage)-order.indexOf(b.stage)) || (a.date_start<b.date_start?-1:1));
+  const counts={};
+  rows.forEach(r=>{ counts[r.stage]=(counts[r.stage]||0)+1; });
+  const summary = order.filter(s=>counts[s]).map(s=>`<span class="pill ${SCHEDULE_STAGE_INFO[s].cls}">${esc(SCHEDULE_STAGE_INFO[s].label)} ${counts[s]}</span>`).join(' ');
+  const listRows = sorted.map(r=>{
+    const info = SCHEDULE_STAGE_INFO[r.stage] || SCHEDULE_STAGE_INFO.unknown;
+    return `<div class="job">
+      <div class="g"><div class="t">${esc(r.branch_name)}</div>
+       <div class="s">${esc(r.team_code)} · ${fmtDate(r.date_start)}–${fmtDate(r.date_end)}</div>
+       <div style="margin-top:5px"><span class="pill ${info.cls}">${esc(info.label)}</span></div></div>
+     </div>`;
+  }).join('');
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+    <div style="flex:1"><h1>ภาพรวมทุกแผนงาน</h1><span class="sub">${rows.length} รายการ</span></div></div>
+   <div class="body">
+    <div class="card" style="display:flex;gap:6px;flex-wrap:wrap">${summary}</div>
+    ${listRows||'<div class="hint">ยังไม่มีแผนงาน</div>'}
+   </div></div>`;
 }
 
 async function remindSchedule(id,btn){

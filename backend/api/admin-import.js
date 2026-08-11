@@ -20,6 +20,7 @@ module.exports = async function handler(req, res) {
     if (req.query.action === 'schedule_pending') return schedulePending(res);
     if (req.query.action === 'branch_provinces') return branchProvinces(res);
     if (req.query.action === 'area_assignments') return areaAssignmentsList(res);
+    if (req.query.action === 'schedule_flow') return scheduleFlow(res);
     return fail(res, 400, `ไม่รู้จัก action: ${req.query.action}`);
   }
 
@@ -32,6 +33,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'hotel_import') return hotelImport(res, body);
     if (body.action === 'backfill_hotel_codes') return backfillHotelCodes(res);
     if (body.action === 'area_assignment_save') return areaAssignmentSave(res, body);
+    if (body.action === 'area_approver_add') return areaApproverAdd(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -68,6 +70,49 @@ async function schedulePending(res) {
     }));
 
   return json(res, 200, { pending });
+}
+
+// ---------------------------------------------------------------- schedule_flow — every schedule row's current pipeline stage
+
+async function scheduleFlow(res) {
+  const { data: schedule, error: schedErr } = await supabase
+    .from('work_schedule')
+    .select('id, team_code, branch_code, date_start, date_end, branches(name)')
+    .order('date_start');
+  if (schedErr) return fail(res, 500, schedErr.message);
+
+  const { data: bookings, error: bookErr } = await supabase
+    .from('bookings')
+    .select('work_schedule_id, status, checkin_date')
+    .not('work_schedule_id', 'is', null);
+  if (bookErr) return fail(res, 500, bookErr.message);
+  // At most one live booking per work_schedule_id — cancel_booking hard-deletes,
+  // edit updates in place, so this is never ambiguous in practice.
+  const bookingByScheduleId = new Map((bookings || []).map((b) => [b.work_schedule_id, b]));
+
+  const STAGE_BY_STATUS = {
+    'ส่งคำขอ': 'awaiting_area',
+    'อนุมัติพื้นที่แล้ว': 'awaiting_admin',
+    'ดำเนินการจอง': 'admin_processing',
+    'จองสำเร็จ': 'done',
+    'ต้องแก้ไข': 'needs_fix',
+    'ติดปัญหา': 'problem'
+  };
+
+  const rows = (schedule || []).map((s) => {
+    const b = bookingByScheduleId.get(s.id);
+    return {
+      id: s.id,
+      team_code: s.team_code,
+      branch_name: s.branches?.name || s.branch_code,
+      date_start: s.date_start,
+      date_end: s.date_end,
+      stage: b ? (STAGE_BY_STATUS[b.status] || 'unknown') : 'not_booked',
+      booking_status: b ? b.status : null
+    };
+  });
+
+  return json(res, 200, { rows });
 }
 
 // ---------------------------------------------------------------- schedule_import (v2)
@@ -493,6 +538,17 @@ async function backfillHotelCodes(res) {
 }
 
 // ---------------------------------------------------------------- area_team_assignments (AREA approval stage)
+
+async function areaApproverAdd(res, body) {
+  const code = String(body.area_employee_code || '').trim();
+  if (!code) return fail(res, 400, 'ไม่ได้ระบุรหัสพนักงาน');
+  const { data: emp, error: empErr } = await supabase.from('employees').select('code').eq('code', code).maybeSingle();
+  if (empErr) return fail(res, 500, empErr.message);
+  if (!emp) return fail(res, 400, 'ไม่พบพนักงานรหัสนี้');
+  const { error } = await supabase.from('employees').update({ position: AREA_APPROVER_POSITION }).eq('code', code);
+  if (error) return fail(res, 500, error.message);
+  return json(res, 200, { ok: true });
+}
 
 async function areaAssignmentsList(res) {
   const { data: approvers, error: empErr } = await supabase
