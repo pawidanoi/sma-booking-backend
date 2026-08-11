@@ -94,13 +94,19 @@ async function apiGet(path){
   return j;
 }
 
+// Login is now optional — only needed to unlock the employee-home-address
+// map layer. Shown as its own screen (user-initiated, via the "เข้าสู่ระบบ"
+// header link), with a way back to the already-loaded anonymous dashboard
+// rather than a wall blocking everything.
 function renderLogin(err){
+  const backBtn = LAST_SUMMARY ? `<button class="xlbtn" style="margin-top:10px" onclick="renderDashboard(LAST_SUMMARY)">‹ กลับไปดูแดชบอร์ด</button>` : '';
   $("#app").innerHTML = `<div class="loginbox">
-    <h2>แดชบอร์ดผู้บริหาร</h2>
-    <div class="hint">พนักงานทุกคนเข้าดูได้ — ใส่รหัสพนักงานของคุณ</div>
+    <h2>เข้าสู่ระบบ</h2>
+    <div class="hint">ใส่รหัสพนักงานเพื่อดูชั้นข้อมูล "ที่อยู่บ้านพนักงาน" บนแผนที่ด้วย</div>
     <input id="code" placeholder="เช่น CMT2600940" onkeydown="if(event.key==='Enter')doLogin()"/>
     ${err?`<div class="err">${esc(err)}</div>`:''}
-    <button onclick="doLogin()">เข้าดูแดชบอร์ด</button></div>`;
+    <button onclick="doLogin()">เข้าสู่ระบบ</button>
+    ${backBtn}</div>`;
   const el=$("#code"); if(el) el.focus();
 }
 
@@ -117,23 +123,28 @@ async function doLogin(){
   try{
     const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
     ME = d.me;
-    captureRegistries(d);
     sessionStorage.setItem('dash_actor', code);
-    await loadAndRender();
+    await loadAndRender(code);
   }catch(e){ renderLogin(e.message); }
 }
 
-async function loadAndRender(){
+// actorCode is optional — omitted (or invalid) means the anonymous public
+// view: everything except employee_homes/home_lat/home_lng, which the
+// backend simply never fetches without a valid actor (not fetched-then-hidden).
+async function loadAndRender(actorCode){
   try{
-    const d = await apiGet('/dashboard-summary?actor='+encodeURIComponent(ME.code));
+    const d = await apiGet('/dashboard-summary'+(actorCode?('?actor='+encodeURIComponent(actorCode)):''));
     ALL_RECORDS = d.records || [];
     DASH_HOMES = d.employee_homes || [];
+    captureRegistries(d);
+    if (!d.logged_in) { ME = null; sessionStorage.removeItem('dash_actor'); }
     renderDashboard(d);
   }catch(e){
-    // Any failure here (bad/expired actor code, network issue) sends them
-    // back to the login gate rather than getting stuck on a half-loaded page.
-    sessionStorage.removeItem('dash_actor');
-    renderLogin(e.message);
+    // Data failed to load at all (network issue, etc.) — this is the one
+    // case worth a real error screen, distinct from "just not logged in".
+    ME = null; sessionStorage.removeItem('dash_actor');
+    $("#app").innerHTML = `<div class="loginbox"><h2>โหลดข้อมูลไม่สำเร็จ</h2><div class="err">${esc(e.message)}</div>
+      <button class="xlbtn" style="margin-top:10px" onclick="loadAndRender()">ลองใหม่</button></div>`;
   }
 }
 
@@ -145,8 +156,9 @@ function renderDashboard(d){
 
   $("#app").innerHTML = `
     <header><h1>แดชบอร์ดผู้บริหาร — ค่าใช้จ่ายที่พักภาคสนาม SMA</h1>
-      <span class="who">${esc(ME.nickname||ME.name)} · ${esc(ME.position||'')}</span>
-      <a onclick="logout()">ออกจากระบบ</a></header>
+      ${ME
+        ? `<span class="who">${esc(ME.nickname||ME.name)} · ${esc(ME.position||'')}</span><a onclick="logout()">ออกจากระบบ</a>`
+        : `<a onclick="renderLogin()">เข้าสู่ระบบเพื่อดูที่อยู่บ้านพนักงาน</a>`}</header>
     <div class="wrap">
       <div class="filters">
         <select id="fMonth" onchange="onFilterChange()"><option value="">ทุกเดือน</option>${months.map(m=>`<option value="${m}">${esc(monthLabel[m])}</option>`).join("")}</select>
@@ -402,8 +414,12 @@ async function onMeasureMarkerClick(lat, lng, label){
   const [a,b] = MEASURE_POINTS;
   DASH_MEASURE.clearLayers();
   L.polyline([[a.lat,a.lng],[b.lat,b.lng]], { color:'#6b3fa0', weight:3, dashArray:'4 8' }).addTo(DASH_MEASURE);
-  if (hint) hint.textContent = 'กำลังคำนวณระยะทางขับรถจริง…';
   MEASURE_POINTS = [];
+  if (!ME){
+    if (hint) hint.textContent = `${a.label} → ${b.label} · เข้าสู่ระบบเพื่อดูระยะทางขับรถจริง`;
+    return;
+  }
+  if (hint) hint.textContent = 'กำลังคำนวณระยะทางขับรถจริง…';
   try{
     const d = await apiGet(`/directions?actor=${encodeURIComponent(ME.code)}&from_lat=${a.lat}&from_lng=${a.lng}&to_lat=${b.lat}&to_lng=${b.lng}`);
     if (hint) hint.textContent = `${a.label} → ${b.label}: ${d.distance_km} กม. (~${d.duration_min} นาที) · คลิกหมุดใหม่เพื่อวัดอีกครั้ง`;
@@ -429,6 +445,10 @@ async function highlightRecordOnMap(id){
   DASH_MAP.fitBounds([from, to], { padding:[60,60], maxZoom:14 });
 
   const distEl = $("#modalDistance");
+  if (!ME){
+    if (distEl) distEl.textContent = 'เข้าสู่ระบบเพื่อดูระยะทางขับรถจริง';
+    return;
+  }
   if (distEl) distEl.textContent = 'กำลังคำนวณระยะทางขับรถจริง…';
   try{
     const d = await apiGet(`/directions?actor=${encodeURIComponent(ME.code)}&from_lat=${from[0]}&from_lng=${from[1]}&to_lat=${to[0]}&to_lng=${to[1]}`);
@@ -608,26 +628,24 @@ function exportAllToExcel(){
 
 function logout(){
   sessionStorage.removeItem('dash_actor'); ME=null;
-  // renderLogin() wipes #app, taking the map's DOM container with it — drop the
-  // stale Leaflet instance too or the next login would draw onto a detached map.
+  // renderDashboard() wipes #app, taking the map's DOM container with it —
+  // drop the stale Leaflet instance too or the next render would draw onto
+  // a detached map. Goes back to the anonymous public view, not a login wall.
   if (DASH_MAP) { DASH_MAP.remove(); DASH_MAP=null; DASH_HIGHLIGHT=null; DASH_MEASURE=null; }
-  DASH_BRANCHES=[]; DASH_HOTELS=[]; DASH_HOMES=[];
   MEASURE_MODE=false; MEASURE_POINTS=[];
-  renderLogin();
+  loadAndRender();
 }
 
+// Public by design — loads and renders immediately, no login wall. A saved
+// actor code (from a previous voluntary login) silently re-unlocks the
+// employee-home layer; anything else falls back to the anonymous view.
 (async function boot(){
   const saved = sessionStorage.getItem('dash_actor');
   if(saved){
-    try{
-      const d = await apiGet('/bootstrap?code='+encodeURIComponent(saved));
-      ME = d.me;
-      captureRegistries(d);
-      await loadAndRender();
-      return;
-    }catch(e){ sessionStorage.removeItem('dash_actor'); }
+    try{ ME = (await apiGet('/bootstrap?code='+encodeURIComponent(saved))).me; }
+    catch(e){ sessionStorage.removeItem('dash_actor'); }
   }
-  renderLogin();
+  await loadAndRender(saved);
 })();
 </script>
 </body>

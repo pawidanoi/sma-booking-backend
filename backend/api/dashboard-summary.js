@@ -10,14 +10,17 @@ const LIVE_PERIOD_START = '2026-08-01';
 
 // GET /api/dashboard-summary?actor=CODE&from=2026-03-01&to=2026-08-31
 //
-// Open to any logged-in employee (confirmed) — no longer gated to
-// ผู้บริหาร/แอดมิน/the two named manager titles.
+// Public by design — KPIs/charts/table are meant to be viewable via a bare
+// link, no login required, confirmed including truly anonymous visitors.
+// actor is now OPTIONAL: only employee home addresses (the overview map
+// layer AND each record's own home_lat/lng) stay gated on it — anonymous
+// callers get everything else, logging in with any employee code unlocks
+// the home-address data too (not restricted to a role, just not anonymous).
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return fail(res, 405, 'method not allowed');
 
   const actorCode = (req.query.actor || '').trim();
-  const actor = await getActor(actorCode);
-  if (!actor) return fail(res, 401, 'ไม่พบรหัสพนักงานผู้ใช้งาน — เข้าสู่ระบบอีกครั้ง');
+  const actor = actorCode ? await getActor(actorCode) : null;
 
   try {
     const from = req.query.from || '2026-03-01';
@@ -29,6 +32,12 @@ module.exports = async function handler(req, res) {
       .gte('month_start', from)
       .lte('month_start', to);
 
+    // Branch/hotel coordinates for the overview map's two ungated layers —
+    // fetched here directly (not via /api/bootstrap, which requires a valid
+    // employee code) so the map works for a fully anonymous visitor too.
+    const branchesQ = supabase.from('branches').select('code, name, lat, lng');
+    const hotelsQ = supabase.from('hotels').select('code, name, lat, lng').eq('active', true);
+
     const liveQ = supabase
       .from('bookings')
       .select(BOOKING_SELECT)
@@ -37,21 +46,33 @@ module.exports = async function handler(req, res) {
       .gte('checkin_date', from)
       .lte('checkin_date', to);
 
-    // Dashboard overview map: every employee's home pin, gated behind this
-    // endpoint's isDashboardViewer check rather than the general bootstrap staff
-    // list (which every logged-in employee receives) — home addresses are
-    // exactly the kind of coworker data that list must never leak.
-    const homesQ = supabase.from('employees').select('code, name, nickname, home_lat, home_lng').eq('active', true).not('home_lat', 'is', null).not('home_lng', 'is', null);
+    // Dashboard overview map: every employee's home pin — stays behind a
+    // valid actor (see comment above the handler), never fetched at all for
+    // an anonymous request rather than fetched-then-hidden.
+    const homesQ = actor
+      ? supabase.from('employees').select('code, name, nickname, home_lat, home_lng').eq('active', true).not('home_lat', 'is', null).not('home_lng', 'is', null)
+      : Promise.resolve({ data: [] });
 
-    const [{ data: legacyRows, error: legacyErr }, { data: liveRowsRaw, error: liveErr }, { data: homeRows, error: homesErr }] = await Promise.all([legacyQ, liveQ, homesQ]);
+    const [
+      { data: legacyRows, error: legacyErr },
+      { data: liveRowsRaw, error: liveErr },
+      { data: homeRows, error: homesErr },
+      { data: branchRows, error: branchErr },
+      { data: hotelRows, error: hotelErr }
+    ] = await Promise.all([legacyQ, liveQ, homesQ, branchesQ, hotelsQ]);
     if (legacyErr) return fail(res, 500, legacyErr.message);
     if (liveErr) return fail(res, 500, liveErr.message);
     if (homesErr) return fail(res, 500, homesErr.message);
+    if (branchErr) return fail(res, 500, branchErr.message);
+    if (hotelErr) return fail(res, 500, hotelErr.message);
 
     // Map screen (dashboard, "booking นี้" pins): the one home location shown per
     // booking is the requester's — same convention the home-distance-rule already
     // uses in bookings.js, not an attempt to average every guest's address.
-    const requesterCodes = [...new Set((liveRowsRaw || []).map((r) => r.created_by_employee).filter(Boolean))];
+    // Same anonymous gate as the overview layer — not fetched at all when there's
+    // no logged-in actor, so an anonymous caller can't just read it off the raw
+    // per-record JSON even though the UI never rendered a pin for it.
+    const requesterCodes = actor ? [...new Set((liveRowsRaw || []).map((r) => r.created_by_employee).filter(Boolean))] : [];
     const { data: empRows } = requesterCodes.length
       ? await supabase.from('employees').select('code, home_lat, home_lng').in('code', requesterCodes)
       : { data: [] };
@@ -90,7 +111,11 @@ module.exports = async function handler(req, res) {
       code: e.code, name: e.nickname || e.name, lat: Number(e.home_lat), lng: Number(e.home_lng)
     }));
 
-    json(res, 200, { records, kpis, monthly_trend, src_split, cost_per_person_night_trend, team_cost, top_hotels, employee_homes });
+    json(res, 200, {
+      records, kpis, monthly_trend, src_split, cost_per_person_night_trend, team_cost, top_hotels, employee_homes,
+      branches: branchRows || [], hotels: hotelRows || [],
+      logged_in: !!actor
+    });
   } catch (err) {
     console.error('dashboard-summary error', err);
     fail(res, 500, err.message || 'เกิดข้อผิดพลาดในระบบ');
