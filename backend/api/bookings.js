@@ -2,6 +2,7 @@ const { supabase } = require('../lib/supabase');
 const { json, fail, readBody, roomsFor, nightsBetween, emptyBedsByGender } = require('../lib/http');
 const { getActor, isAdmin: checkIsAdmin, isAreaApprover, getAreaTeamCodes, canAreaApprove } = require('../lib/auth');
 const { drivingDistance } = require('../lib/directions');
+const { push, qrUri, liffLink } = require('../lib/line');
 
 const MISSION_TYPES = ['งานแฟร์', 'งานเปิดสาขา', 'สำรวจพื้นที่', 'อื่นๆ'];
 const MAX_PRICE_PER_ROOM_NIGHT = 600;
@@ -31,10 +32,11 @@ const BOOKING_SELECT = `
   area_approved_by, area_approved_at,
   created_by_employee, created_at, updated_at,
   branches ( name, province, lat, lng ),
-  booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, unavailable_at, hotels ( code, name, province, lat, lng, default_price_per_night, on_choowap ) ),
-  booking_guests ( id, team_code, employee_code, name, phone, gender ),
+  booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, unavailable_at, hotels ( code, name, province, lat, lng, map_link, default_price_per_night, on_choowap ) ),
+  booking_guests ( id, team_code, employee_code, name, phone, gender, employees ( home_lat, home_lng ) ),
   booking_changes ( id, type, new_rooms, new_checkin, new_checkout, note, status, created_at ),
-  booking_join_requests ( id, requested_by_employee, guest_name, guest_gender, guest_phone, guest_employee_code, guest_team_code, status, decided_by_employee, decided_at, created_at )
+  booking_join_requests ( id, requested_by_employee, guest_name, guest_gender, guest_phone, guest_employee_code, guest_team_code, status, decided_by_employee, decided_at, created_at ),
+  booking_status_log ( from_status, to_status, changed_by, changed_at )
 `;
 
 module.exports = async function handler(req, res) {
@@ -174,7 +176,7 @@ async function createBooking(req, res, actor, body) {
     if (mission_type === 'อื่นๆ' && !String(mission_type_note || '').trim()) return fail(res, 400, 'กรุณาระบุรายละเอียดภารกิจ');
   }
 
-  const { data: branchRow } = await supabase.from('branches').select('code, lat, lng').eq('code', branch_code).maybeSingle();
+  const { data: branchRow } = await supabase.from('branches').select('code, name, lat, lng').eq('code', branch_code).maybeSingle();
   if (!branchRow) return fail(res, 400, 'ไม่พบรหัสสาขานี้ในทะเบียน');
 
   // Rule: warn when the same person is already booked on overlapping dates.
@@ -274,8 +276,33 @@ async function createBooking(req, res, actor, body) {
     return fail(res, 500, `บันทึกที่พักที่เลือกไม่สำเร็จ: ${cErr.message}`);
   }
 
+  // Immediate ping the moment a request lands — the daily cron only catches AREA
+  // at a fixed "4 days before checkin" checkpoint, which a late-submitted request
+  // can sail straight past with nobody ever notified. Best-effort: a LINE failure
+  // here must never take the successfully-created booking down with it.
+  try {
+    await notifyAreaApprovers(actor.team_code, branchRow.name || branch_code, checkin_date, checkout_date);
+  } catch (err) {
+    console.error('notifyAreaApprovers failed', err);
+  }
+
   const { data: fresh } = await supabase.from('bookings').select(BOOKING_SELECT).eq('id', id).maybeSingle();
   json(res, 201, { booking: fresh ? decorate(fresh) : null, warnings: conflicts });
+}
+
+async function notifyAreaApprovers(teamCode, branchName, checkinDate, checkoutDate) {
+  const { data: assignments } = await supabase.from('area_team_assignments').select('area_employee_code').eq('team_code', teamCode);
+  const codes = [...new Set((assignments || []).map((a) => a.area_employee_code))];
+  if (!codes.length) return;
+  const { data: approvers } = await supabase.from('employees').select('line_user_id').in('code', codes);
+  const recipients = (approvers || []).map((a) => a.line_user_id).filter(Boolean);
+  if (!recipients.length) return;
+  const message = {
+    type: 'text',
+    text: `📋 มีคำขอที่พักใหม่รอตรวจอนุมัติพื้นที่ค่ะ — ทีม ${teamCode} ที่ ${branchName} เข้าพัก ${checkinDate}–${checkoutDate} กดตรวจได้เลยนะคะ 🥭`,
+    quickReply: { items: [qrUri('ตรวจเลย', liffLink('/home'))] }
+  };
+  await Promise.all(recipients.map((lineId) => push(lineId, [message])));
 }
 
 async function findGuestConflicts(guests, newCheckin, newCheckout) {
@@ -473,6 +500,21 @@ async function handlePatch(req, res, actor, isAdmin, body) {
       .eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
     await logStatus(booking_id, bk.status, 'ต้องแก้ไข', actor.code);
+    return await respondFresh(res, booking_id);
+  }
+
+  // Lets whoever is actually reviewing (admin or the covering AREA approver)
+  // patch in a better map link for a custom hotel entry, right from the
+  // detail screen — same review-time need as the AREA-approval home-distance
+  // display, just for the hotel side. No new lat/lng columns: distance is
+  // derived client-side from whatever coordinates the link itself encodes.
+  if (action === 'update_hotel_link') {
+    const { choice_id, custom_map_link } = body;
+    if (!isAdmin && !(await canAreaApprove(actor, bk.team_code))) return fail(res, 403, 'ไม่มีสิทธิ์แก้ไขที่พักของการจองนี้');
+    if (!choice_id) return fail(res, 400, 'ไม่ได้ระบุที่พัก');
+    if (!custom_map_link || !String(custom_map_link).trim()) return fail(res, 400, 'ไม่ได้วางลิงก์');
+    const { error } = await supabase.from('booking_hotel_choices').update({ custom_map_link: String(custom_map_link).trim() }).eq('id', choice_id).eq('booking_id', booking_id);
+    if (error) return fail(res, 500, error.message);
     return await respondFresh(res, booking_id);
   }
 

@@ -113,6 +113,7 @@
   .toast.show{opacity:1}
   .errtext{font-size:12.5px;color:var(--danger);font-weight:700;margin-top:8px}
   .navlink{display:block;text-align:center;font-size:12.5px;font-weight:700;color:var(--brand);padding:10px;cursor:pointer;text-decoration:none}
+  .maplink{color:var(--brand);text-decoration:none;font-weight:600;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -250,12 +251,76 @@ function normHotel(h){
   return { id:h.id, code:h.code, name:h.name, prov:h.province, near:h.near_area,
            lat:h.lat==null?null:Number(h.lat), lng:h.lng==null?null:Number(h.lng),
            price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
-           choowap:!!h.on_choowap };
+           choowap:!!h.on_choowap, mapLink:h.map_link||null };
+}
+// Shared everywhere a hotel/map link needs a tap-out button — stops the click
+// from bubbling into whatever selects/toggles the row it sits on.
+function mapLinkBtn(url){
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="maplink">📍 ดูใน Maps</a>` : '';
+}
+// Home<->branch distance shown right after a guest's name in AREA/admin review
+// screens (สรุป-requirement's original AREA-approval spec asked for this, never
+// built out — the numeric distance always needed *some* known home coordinate,
+// so a guest with none gets an inline way to add it instead of just a blank).
+function guestHomeDistanceTag(g,b){
+  if(!g.code) return '';
+  if(g.homeLat==null || g.homeLng==null){
+    return `<span class="hint" style="font-size:11px">(ไม่มีข้อมูลที่อยู่ <a onclick="event.stopPropagation();promptAddGuestHome('${esc(g.code)}','${esc(b.id)}',${IS_AREA_APPROVER})" style="color:var(--brand);cursor:pointer;font-weight:700;text-decoration:none">+ เพิ่ม</a>)</span>`;
+  }
+  if(!hasBranchCoords(b)) return '';
+  const km = haversine(b.blat,b.blng,g.homeLat,g.homeLng);
+  return km!=null ? `<span class="hint" style="font-size:11px">(บ้าน–สาขา ${km.toFixed(1)} กม.)</span>` : '';
+}
+async function promptAddGuestHome(code,bookingId,isArea){
+  const link = prompt('วางลิงก์ Google Maps ตำแหน่งบ้านของรหัส '+code+' (หรือพิมพ์ lat,lng)');
+  if(!link) return;
+  const parsed = parseLatLng(link);
+  if(!parsed){ toast('อ่านพิกัดจากลิงก์ไม่ได้ — ลองวางลิงก์ Google Maps ใหม่'); return; }
+  try{
+    await apiSend('/bootstrap','POST',{ code, lat:parsed.lat, lng:parsed.lng });
+    toast('บันทึกตำแหน่งบ้านแล้ว ✓');
+    await reloadBookings();
+    isArea ? renderAreaDetail(bookingId) : renderAdminDetail(bookingId);
+  }catch(e){ toast(e.message); }
+}
+// Custom (off-registry) hotels have no lat/lng column — the distance is
+// derived from whatever coordinates its own Google Maps link encodes, same
+// parser branch-import already uses, so no schema change is needed for this.
+function hotelDistanceKm(h,b){
+  if(h.lat!=null && h.lng!=null && hasBranchCoords(b)) return haversine(b.blat,b.blng,h.lat,h.lng);
+  if(h.custom && h.map){
+    const p=parseLatLngFromMapsUrl(h.map);
+    if(p.lat!=null && hasBranchCoords(b)) return haversine(b.blat,b.blng,p.lat,p.lng);
+  }
+  return null;
+}
+const STATUS_LOG_LABEL = { 'ส่งคำขอ':'ส่งคำขอ', 'อนุมัติพื้นที่แล้ว':'อนุมัติพื้นที่แล้ว', 'ดำเนินการจอง':'ดำเนินการจอง', 'จองสำเร็จ':'จองเสร็จแล้ว', 'ต้องแก้ไข':'ต้องแก้ไข', 'ติดปัญหา':'ติดปัญหา' };
+function statusLogHtml(b){
+  if(!b.statusLog || !b.statusLog.length) return '';
+  const rows = b.statusLog.map(l=>{
+    const who = l.changed_by||'ระบบ';
+    const when = new Date(l.changed_at).toLocaleString('th-TH',{dateStyle:'short',timeStyle:'short'});
+    const to = STATUS_LOG_LABEL[l.to_status]||l.to_status;
+    return `<div class="copyrow"><span class="k">${esc(when)}</span><span class="v">${esc(to)} — ${esc(who)}</span></div>`;
+  }).join('');
+  return `<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">ประวัติการเปลี่ยนสถานะ (${b.statusLog.length})</summary><div class="card" style="margin-top:6px">${rows}</div></details>`;
+}
+async function promptUpdateHotelLink(choiceId,bookingId,isArea){
+  const link = prompt('วางลิงก์ Google Maps ของที่พักนี้ (ใช้คำนวณระยะทางและเปิดดูรีวิวได้)');
+  if(!link) return;
+  try{
+    await apiSend('/bookings','PATCH',{ action:'update_hotel_link', booking_id:bookingId, choice_id:choiceId, custom_map_link:link });
+    toast('บันทึกลิงก์ที่พักแล้ว ✓');
+    await reloadBookings();
+    isArea ? renderAreaDetail(bookingId) : renderAdminDetail(bookingId);
+  }catch(e){ toast(e.message); }
 }
 function normBooking(b){
   const guests = (b.booking_guests||[]).map(g=>({
     id:g.id, g: g.gender==='F' ? 'f' : 'm', team:g.team_code, code:g.employee_code||'',
-    name:g.name, phone:g.phone||''
+    name:g.name, phone:g.phone||'',
+    homeLat: g.employees && g.employees.home_lat!=null ? Number(g.employees.home_lat) : null,
+    homeLng: g.employees && g.employees.home_lng!=null ? Number(g.employees.home_lng) : null
   }));
   const choices = (b.booking_hotel_choices||[]).slice().sort((x,y)=>(x.rank||0)-(y.rank||0)).map(c=>({
     id:c.id,
@@ -263,7 +328,7 @@ function normBooking(b){
     name: c.hotels ? c.hotels.name : c.custom_name,
     price: c.custom_price!=null ? Number(c.custom_price) : (c.hotels && c.hotels.default_price_per_night!=null ? Number(c.hotels.default_price_per_night) : null),
     near: c.hotels ? c.hotels.near_area : null,
-    map: c.custom_map_link || '',
+    map: c.hotels ? (c.hotels.map_link || '') : (c.custom_map_link || ''),
     custom: !c.hotel_id,
     lat: c.hotels && c.hotels.lat!=null ? Number(c.hotels.lat) : null,
     lng: c.hotels && c.hotels.lng!=null ? Number(c.hotels.lng) : null,
@@ -294,6 +359,7 @@ function normBooking(b){
     voucher: b.status==='จองสำเร็จ' || b.confirmation_no ? { code:b.confirmation_no, url:b.voucher_file_url, storagePath:b.voucher_storage_path } : null,
     change: ch ? { id:ch.id, type:ch.type, rooms:ch.new_rooms, newCheckin:ch.new_checkin, newCheckout:ch.new_checkout, note:ch.note } : null,
     joinRequests,
+    statusLog: (b.booking_status_log||[]).slice().sort((x,y)=>new Date(x.changed_at)-new Date(y.changed_at)),
     derived: b.derived || {}
   };
 }
@@ -685,7 +751,7 @@ function renderForm(){
         onclick="toggleHotel('${esc(h.code)}')"
         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleHotel('${esc(h.code)}')}">
       <div class="chk">${sel?'✓':''}</div>
-      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''}</div></div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
       <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
   };
   // Grouped by distance so a 30+ item list isn't one undifferentiated scroll —
@@ -1028,14 +1094,17 @@ function renderAdminQueue(){
   const flagged=BOOKINGS.filter(b=>b.change).length;
   $("#app").innerHTML=`<div class="screen"><div class="appbar">
     <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
-    <span class="sub" style="cursor:pointer;text-decoration:underline" onclick="renderSpareBeds()">เตียงว่าง</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;color:var(--danger);font-weight:700" onclick="renderUrgentNow()">🔥 ต้องรีบดูตอนนี้</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderSpareBeds()">เตียงว่าง</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCheckedIn()">เข้าพักอยู่</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderPendingSchedule()">แผนงานที่ยังไม่จอง</span>
     <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderAreaAssignments()">ผู้ตรวจอนุมัติพื้นที่</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleFlow()">ภาพรวมทุกแผนงาน</span></div>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleFlow()">ภาพรวมทุกแผนงาน</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCycleTime()">เวลาดำเนินการเฉลี่ย</span>
+    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderEmployeeRoster()">จัดการพนักงาน</span></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
@@ -1355,6 +1424,124 @@ async function saveAreaAssignment(code, btn){
   btn.disabled=false;
 }
 
+/* ================= ต้องรีบดูตอนนี้ — รวม 3 จุดเสี่ยงไว้จอเดียว ================= */
+const URGENT_TYPE_INFO = {
+  not_booked:      { label:'พนักงานยังไม่จอง',      cls:'soon' },
+  awaiting_area:   { label:'รอ AREA อนุมัติ',        cls:'soon' },
+  missing_voucher: { label:'ยังไม่แนบวอเชอร์',       cls:'soon' }
+};
+function urgentDaysTag(d){
+  if(d<0) return `<span class="pill soon">เลยกำหนด ${-d} วัน</span>`;
+  if(d===0) return `<span class="pill soon">วันนี้</span>`;
+  return `<span class="pill wait">อีก ${d} วัน</span>`;
+}
+async function renderUrgentNow(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>🔥 ต้องรีบดูตอนนี้</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/admin-import?action=urgent_now&actor='+encodeURIComponent(ME.code));
+    const items=d.items||[];
+    const rows=items.map(it=>{
+      const info=URGENT_TYPE_INFO[it.type];
+      const onClick = it.booking_id ? `renderAdminDetail('${esc(it.booking_id)}')` : '';
+      return `<div class="job" ${onClick?`onclick="${onClick}"`:''}>
+        <div class="g"><div class="t">${esc(it.branch_name)}</div>
+         <div class="s">${esc(it.team_code)} · ${fmtDate(it.date)}</div>
+         <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap"><span class="pill ${info.cls}">${esc(info.label)}</span>${urgentDaysTag(it.days_until)}</div></div>
+        ${onClick?'<div class="chev">›</div>':''}</div>`;
+    }).join('');
+    $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+      <div style="flex:1"><h1>🔥 ต้องรีบดูตอนนี้</h1><span class="sub">${items.length} รายการ</span></div></div>
+     <div class="body">
+      <div class="hint">รวมงานที่ยังไม่จอง, คำขอที่รอ AREA อนุมัติ, และการจองที่ใกล้เข้าพักแล้วแต่ยังไม่แนบวอเชอร์ — เรียงจากด่วนสุดก่อน</div>
+      ${rows||'<div class="hint">ตอนนี้ไม่มีอะไรด่วนเลยค่ะ 🎉</div>'}
+     </div></div>`;
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+
+/* ================= เวลาดำเนินการเฉลี่ย (cycle time) ================= */
+async function renderCycleTime(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>เวลาดำเนินการเฉลี่ย</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/admin-import?action=cycle_time&actor='+encodeURIComponent(ME.code));
+    const rowsOf = (list) => list.map(p=>`<div class="copyrow"><span class="k">${esc(p.name)}</span><span class="v">${p.avg_hours} ชม. เฉลี่ย (${p.count} รายการ)</span></div>`).join('') || '<div class="hint">ยังไม่มีข้อมูล</div>';
+    $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>เวลาดำเนินการเฉลี่ย</h1></div>
+     <div class="body">
+      <div class="hint">คำนวณจากประวัติการเปลี่ยนสถานะจริงของทุกการจอง</div>
+      <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
+       <div><div class="val" style="color:var(--amber)">${d.area_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ย AREA อนุมัติ</div></div>
+       <div><div class="val" style="color:var(--brand)">${d.admin_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยแอดมินเริ่มจอง</div></div>
+      </div></div>
+      <div class="card"><div class="label">แยกตาม AREA ที่อนุมัติ</div>${rowsOf(d.area_by_approver||[])}</div>
+      <div class="card"><div class="label">แยกตามแอดมินที่เริ่มจอง</div>${rowsOf(d.admin_by_person||[])}</div>
+     </div></div>`;
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+
+/* ================= จัดการพนักงาน (roster) ================= */
+let EMP_ROSTER = [], EMP_ROSTER_FILTER = '';
+async function renderEmployeeRoster(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>จัดการพนักงาน</h1></div>
+   <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
+  try{
+    const d=await apiGet('/admin-import?action=employee_list&actor='+encodeURIComponent(ME.code));
+    EMP_ROSTER = d.employees||[];
+    drawEmployeeRoster();
+  }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+function setEmpRosterFilter(v){ EMP_ROSTER_FILTER=v; rerender(drawEmployeeRoster); }
+function drawEmployeeRoster(){
+  const q=EMP_ROSTER_FILTER.trim().toLowerCase();
+  const list = EMP_ROSTER.filter(e=>!q || (e.code||'').toLowerCase().includes(q) || (e.name||'').toLowerCase().includes(q) || (e.nickname||'').toLowerCase().includes(q) || (e.team_code||'').toLowerCase().includes(q));
+  const rows = list.map(e=>`<div class="job" onclick="openEmployeeEdit('${esc(e.code)}')">
+    <div class="d" style="background:${e.active?'var(--success-soft)':'var(--danger-soft)'};color:${e.active?'var(--success)':'var(--danger)'}">${e.gender==='F'?'ญ':(e.gender==='M'?'ช':'?')}<small>${esc(e.team_code||'-')}</small></div>
+    <div class="g"><div class="t">${esc(e.name)}${e.nickname?' ('+esc(e.nickname)+')':''}</div>
+     <div class="s">${esc(e.code)} · ${esc(e.position||'พนักงาน')}${e.line_user_id?' · ผูกไลน์แล้ว':''}${e.active===false?' · ปิดใช้งาน':''}</div></div>
+    <div class="chev">›</div></div>`).join('');
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+    <div style="flex:1"><h1>จัดการพนักงาน</h1><span class="sub">${EMP_ROSTER.length} คน</span></div></div>
+   <div class="body">
+    <input class="txt" placeholder="ค้นหารหัส/ชื่อ/ทีม" value="${esc(EMP_ROSTER_FILTER)}" oninput="setEmpRosterFilter(this.value)"/>
+    <div style="margin-top:10px">${rows||'<div class="hint">ไม่พบพนักงาน</div>'}</div>
+   </div></div>`;
+}
+let EMP_EDIT_CODE=null, EMP_EDIT_GENDER, EMP_EDIT_ACTIVE;
+function openEmployeeEdit(code){
+  const e = EMP_ROSTER.find(x=>x.code===code); if(!e) return;
+  if(EMP_EDIT_CODE!==code){ EMP_EDIT_CODE=code; EMP_EDIT_GENDER=e.gender; EMP_EDIT_ACTIVE=e.active!==false; }
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="drawEmployeeRoster()">‹</span><h1>${esc(e.name)}</h1></div>
+   <div class="body">
+    <div class="card">
+     <div class="label">รหัส</div><div class="val" style="font-size:14px">${esc(e.code)}</div>
+     <div class="label" style="margin-top:10px">ทีม</div>
+     <select class="txt" id="empTeam">${TEAMS.map(t=>`<option value="${esc(t)}" ${e.team_code===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
+     <div class="label" style="margin-top:10px">ตำแหน่ง</div>
+     <input class="txt" id="empPosition" value="${esc(e.position||'')}" placeholder="เว้นว่าง = พนักงานทั่วไป"/>
+     <div class="label" style="margin-top:10px">เพศ</div>
+     <div class="chips"><div class="chip ${EMP_EDIT_GENDER==='F'?'sel':''}" onclick="EMP_EDIT_GENDER='F';rerender(()=>openEmployeeEdit('${code}'))">หญิง</div>
+      <div class="chip ${EMP_EDIT_GENDER==='M'?'sel':''}" onclick="EMP_EDIT_GENDER='M';rerender(()=>openEmployeeEdit('${code}'))">ชาย</div></div>
+     <div class="label" style="margin-top:10px">เบอร์โทร</div>
+     <input class="txt" id="empPhone" value="${esc(e.phone||'')}"/>
+     <div class="label" style="margin-top:10px">สถานะ</div>
+     <div class="chips"><div class="chip ${EMP_EDIT_ACTIVE?'sel':''}" onclick="EMP_EDIT_ACTIVE=true;rerender(()=>openEmployeeEdit('${code}'))">ใช้งานอยู่</div>
+      <div class="chip ${!EMP_EDIT_ACTIVE?'sel':''}" onclick="EMP_EDIT_ACTIVE=false;rerender(()=>openEmployeeEdit('${code}'))">ปิดใช้งาน (ลาออก)</div></div>
+    </div>
+    <button class="btn" onclick="saveEmployeeEdit('${code}')">บันทึก</button>
+   </div></div>`;
+}
+async function saveEmployeeEdit(code){
+  const team_code=($("#empTeam")||{}).value;
+  const position=(($("#empPosition")||{}).value||'').trim();
+  const phone=(($("#empPhone")||{}).value||'').trim();
+  try{
+    await apiSend('/admin-import','POST',{ action:'employee_update', code, team_code, position, gender:EMP_EDIT_GENDER, phone, active:EMP_EDIT_ACTIVE });
+    toast('บันทึกแล้ว ✓');
+    EMP_EDIT_CODE=null;
+    renderEmployeeRoster();
+  }catch(e){ toast(e.message); }
+}
+
 const SCHEDULE_STAGE_INFO = {
   not_booked:      { label:'พนักงานยังไม่จอง',        cls:'wait' },
   awaiting_area:   { label:'รอ AREA อนุมัติ',          cls:'wait' },
@@ -1623,9 +1810,7 @@ function renderAdminDetail(id){
   const chosen=b.hotels.find(h=>h.id===b.chosenChoiceId)||null;
   const cost=chosen?(chosen.price||0)*rooms.length*nights:0;
   const hasBCoords = hasBranchCoords(b);
-  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, {
-    _km: (hasBCoords && h.lat!=null) ? haversine(b.blat,b.blng,h.lat,h.lng) : null
-  }));
+  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, { _km: hotelDistanceKm(h,b) }));
   const anyUnavailable = hotelsWithDist.some(h=>h.unavailable);
   // Only surface once something's actually unavailable — the admin asked for
   // alternatives, not a second opinion on choices that are still fine.
@@ -1638,9 +1823,12 @@ function renderAdminDetail(id){
         .sort((x,y)=>(x._km==null?9999:x._km)-(y._km==null?9999:y._km))
         .slice(0,3)
     : [];
-  const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
-    : h.custom ? (h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · ที่พักใหม่`:'ที่พักใหม่')
-    : esc(h.near||'-');
+  const hotelSubtitle = h => {
+    const base = h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
+      : h.custom ? 'ไม่มีข้อมูลระยะทาง' : esc(h.near||'-');
+    const fixLink = (h.custom && h._km==null) ? ` <a onclick="event.stopPropagation();promptUpdateHotelLink('${esc(h.id)}','${esc(b.id)}',false)" style="color:var(--brand);cursor:pointer;font-weight:700;text-decoration:none">+ เพิ่มลิงก์</a>` : '';
+    return `${base}${fixLink} ${mapLinkBtn(h.map)}`;
+  };
   const rc=rooms.map((r,k)=>{
     const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
     const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
@@ -1649,7 +1837,7 @@ function renderAdminDetail(id){
   const guestRows=guests.map(g=>`<div class="guestcard">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="gt ${g.g}">${g.g==='f'?'ญ':'ช'}</span><strong style="font-size:12px">${esc(g.team||'')}</strong></div>
     <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.code||'')}')">คัดลอก</span></div>
-    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.name||'')}')">คัดลอก</span></div>
+    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')} ${guestHomeDistanceTag(g,b)}</span><span class="cp" onclick="copyTxt('${esc(g.name||'')}')">คัดลอก</span></div>
     <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.phone||'')}')">คัดลอก</span></div>
    </div>`).join("");
   const hotelRadios=hotelsWithDist.map(h=>{
@@ -1738,6 +1926,7 @@ function renderAdminDetail(id){
      ${chosen?`<div class="hint" style="margin-top:8px">ประมาณการรวม ~${cost.toLocaleString()}฿ (${nights} คืน × ${rooms.length} ห้อง)</div>`:'<div class="hint">ยังไม่ได้เลือกที่พักที่จะจอง</div>'}</div>
     ${altCard}
     ${voucherShown}
+    ${statusLogHtml(b)}
     ${actions}</div></div>`;
   renderAdminMap(b, suggestions);
 }
@@ -1778,11 +1967,9 @@ function renderAreaDetail(id){
   const rooms=pair(guests);
   const nights=daysBetween(b.checkin,b.checkout)||1;
   const hasBCoords = hasBranchCoords(b);
-  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, {
-    _km: (hasBCoords && h.lat!=null) ? haversine(b.blat,b.blng,h.lat,h.lng) : null
-  }));
+  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, { _km: hotelDistanceKm(h,b) }));
   const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
-    : h.custom ? 'ที่พักใหม่' : esc(h.near||'-');
+    : h.custom ? 'ไม่มีข้อมูลระยะทาง' : esc(h.near||'-');
   const rc=rooms.map((r,k)=>{
     const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
     const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
@@ -1791,7 +1978,7 @@ function renderAreaDetail(id){
   const guestRows=guests.map(g=>`<div class="guestcard">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="gt ${g.g}">${g.g==='f'?'ญ':'ช'}</span><strong style="font-size:12px">${esc(g.team||'')}</strong></div>
     <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span></div>
-    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')}</span></div>
+    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')} ${guestHomeDistanceTag(g,b)}</span></div>
     <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span></div>
    </div>`).join("");
   // Read-only — picking/marking-unavailable a hotel is the admin's job, AREA
@@ -1799,9 +1986,10 @@ function renderAreaDetail(id){
   const hotelRows=hotelsWithDist.map(h=>{
     const provTag = h.prov && h.prov!==b.prov ? ` · จ.${esc(h.prov)}` : '';
     const strike = h.unavailable ? 'text-decoration:line-through;opacity:.55' : '';
+    const fixLink = (h.custom && h._km==null && !h.unavailable) ? ` <a onclick="event.stopPropagation();promptUpdateHotelLink('${esc(h.id)}','${esc(b.id)}',true)" style="color:var(--brand);cursor:pointer;font-weight:700;text-decoration:none">+ เพิ่มลิงก์</a>` : '';
     return `<div class="hotel radio ${b.chosenChoiceId===h.id?'sel':''}">
       <div class="chk">${b.chosenChoiceId===h.id?'✓':''}</div>
-      <div class="n"><div class="t" style="${strike}">${esc(h.name)}</div><div class="s">${h.unavailable?'จองไม่ได้ (เต็ม)':hotelSubtitle(h)}${provTag}</div></div>
+      <div class="n"><div class="t" style="${strike}">${esc(h.name)}</div><div class="s">${h.unavailable?'จองไม่ได้ (เต็ม)':hotelSubtitle(h)}${provTag}${fixLink} ${mapLinkBtn(h.map)}</div></div>
       <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
   }).join("");
   const mapCard = (hasBCoords || hotelsWithDist.some(h=>h.lat!=null)) ? `<div class="card" style="padding:10px">
@@ -1840,6 +2028,7 @@ function renderAreaDetail(id){
     <div class="card"><div class="label">รหัส · ชื่อ · เบอร์</div>${guestRows}</div>
     ${mapCard}
     <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้</div>${hotelRows}</div>
+    ${statusLogHtml(b)}
     ${actions}</div></div>`;
   renderAdminMap(b, []);
 }

@@ -29,6 +29,9 @@ module.exports = async function handler(req, res) {
     if (req.query.action === 'branch_provinces') return branchProvinces(res);
     if (req.query.action === 'area_assignments') return areaAssignmentsList(res);
     if (req.query.action === 'schedule_flow') return scheduleFlow(res);
+    if (req.query.action === 'urgent_now') return urgentNow(res);
+    if (req.query.action === 'cycle_time') return cycleTime(res);
+    if (req.query.action === 'employee_list') return employeeList(res);
     return fail(res, 400, `ไม่รู้จัก action: ${req.query.action}`);
   }
 
@@ -43,6 +46,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'area_assignment_save') return areaAssignmentSave(res, body);
     if (body.action === 'area_approver_add') return areaApproverAdd(res, body);
     if (body.action === 'legacy_import') return legacyImport(res, body);
+    if (body.action === 'employee_update') return employeeUpdate(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -161,6 +165,144 @@ async function areaPendingSchedule(res, actor) {
   });
 
   return json(res, 200, { rows });
+}
+
+// ---------------------------------------------------------------- urgent_now
+// One combined "what needs attention right now" feed across the three places
+// a booking can silently stall — unbooked jobs, AREA review, and a missing
+// voucher — instead of a head having to check schedule_flow, the AREA queue,
+// and the admin queue separately to see what's actually at risk today.
+
+async function urgentNow(res) {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const daysUntil = (dateStr) => Math.round((new Date(dateStr).getTime() - today.getTime()) / 86400000);
+
+  const { data: schedule, error: schedErr } = await supabase
+    .from('work_schedule')
+    .select('id, team_code, branch_code, date_start, advance_days, branches(name)');
+  if (schedErr) return fail(res, 500, schedErr.message);
+  const { data: scheduledBookings, error: sbErr } = await supabase
+    .from('bookings').select('work_schedule_id').not('work_schedule_id', 'is', null);
+  if (sbErr) return fail(res, 500, sbErr.message);
+  const bookedScheduleIds = new Set((scheduledBookings || []).map((b) => b.work_schedule_id));
+
+  const items = [];
+  (schedule || []).forEach((s) => {
+    if (bookedScheduleIds.has(s.id)) return;
+    const target = addDays(s.date_start, -(s.advance_days || 0));
+    const d = daysUntil(target);
+    if (d > 5) return;
+    items.push({ type: 'not_booked', team_code: s.team_code, branch_name: s.branches?.name || s.branch_code, date: s.date_start, days_until: d });
+  });
+
+  const { data: bookings, error: bErr } = await supabase
+    .from('bookings')
+    .select('id, team_code, branch_code, status, checkin_date, voucher_file_url, voucher_storage_path, branches(name)')
+    .in('status', ['ส่งคำขอ', 'ดำเนินการจอง']);
+  if (bErr) return fail(res, 500, bErr.message);
+  (bookings || []).forEach((b) => {
+    const d = daysUntil(b.checkin_date);
+    if (b.status === 'ส่งคำขอ' && d <= 4) {
+      items.push({ type: 'awaiting_area', booking_id: b.id, team_code: b.team_code, branch_name: b.branches?.name || b.branch_code, date: b.checkin_date, days_until: d });
+    }
+    if (b.status === 'ดำเนินการจอง' && d <= 2 && !b.voucher_file_url && !b.voucher_storage_path) {
+      items.push({ type: 'missing_voucher', booking_id: b.id, team_code: b.team_code, branch_name: b.branches?.name || b.branch_code, date: b.checkin_date, days_until: d });
+    }
+  });
+
+  items.sort((a, b) => a.days_until - b.days_until);
+  return json(res, 200, { items });
+}
+
+// ---------------------------------------------------------------- cycle_time
+// How long each stage actually takes, from booking_status_log — the dashboard
+// answers "how much money" but nothing today answers "how much time," which
+// is the other half of "did the AREA-approval stage actually help."
+
+async function cycleTime(res) {
+  const { data: logs, error } = await supabase
+    .from('booking_status_log')
+    .select('booking_id, from_status, to_status, changed_by, changed_at')
+    .order('changed_at');
+  if (error) return fail(res, 500, error.message);
+
+  const byBooking = new Map();
+  (logs || []).forEach((l) => {
+    if (!byBooking.has(l.booking_id)) byBooking.set(l.booking_id, []);
+    byBooking.get(l.booking_id).push(l);
+  });
+
+  const areaHours = []; // ส่งคำขอ -> อนุมัติพื้นที่แล้ว, keyed by who approved
+  const adminHours = []; // อนุมัติพื้นที่แล้ว (or ส่งคำขอ) -> ดำเนินการจอง, keyed by who started it
+
+  for (const rows of byBooking.values()) {
+    const at = (status) => rows.find((r) => r.to_status === status);
+    const submitted = at('ส่งคำขอ');
+    const areaApproved = at('อนุมัติพื้นที่แล้ว');
+    const processing = at('ดำเนินการจอง');
+    if (submitted && areaApproved) {
+      areaHours.push({ code: areaApproved.changed_by, hours: (new Date(areaApproved.changed_at) - new Date(submitted.changed_at)) / 3600000 });
+    }
+    if (processing) {
+      const from = areaApproved || submitted;
+      if (from) adminHours.push({ code: processing.changed_by, hours: (new Date(processing.changed_at) - new Date(from.changed_at)) / 3600000 });
+    }
+  }
+
+  const { data: employees } = await supabase.from('employees').select('code, name, nickname');
+  const nameByCode = new Map((employees || []).map((e) => [e.code, e.nickname || e.name]));
+
+  const groupBy = (rows) => {
+    const byCode = new Map();
+    rows.forEach((r) => {
+      if (!byCode.has(r.code)) byCode.set(r.code, []);
+      byCode.get(r.code).push(r.hours);
+    });
+    return Array.from(byCode.entries()).map(([code, hoursList]) => ({
+      code,
+      name: nameByCode.get(code) || code,
+      count: hoursList.length,
+      avg_hours: Math.round((hoursList.reduce((a, h) => a + h, 0) / hoursList.length) * 10) / 10
+    })).sort((a, b) => b.count - a.count);
+  };
+
+  const avgOf = (rows) => rows.length ? Math.round((rows.reduce((a, r) => a + r.hours, 0) / rows.length) * 10) / 10 : null;
+
+  return json(res, 200, {
+    area_avg_hours: avgOf(areaHours),
+    admin_avg_hours: avgOf(adminHours),
+    area_by_approver: groupBy(areaHours),
+    admin_by_person: groupBy(adminHours)
+  });
+}
+
+// ---------------------------------------------------------------- employee_list / employee_update
+
+async function employeeList(res) {
+  const { data, error } = await supabase
+    .from('employees')
+    .select('code, name, nickname, team_code, gender, phone, position, active, line_user_id, home_lat, home_lng')
+    .order('team_code');
+  if (error) return fail(res, 500, error.message);
+  return json(res, 200, { employees: data || [] });
+}
+
+async function employeeUpdate(res, body) {
+  const code = String(body.code || '').trim();
+  if (!code) return fail(res, 400, 'ไม่ได้ระบุรหัสพนักงาน');
+
+  const patch = {};
+  if (body.team_code !== undefined) patch.team_code = body.team_code || null;
+  if (body.position !== undefined) patch.position = body.position || null;
+  if (body.gender !== undefined) patch.gender = body.gender === 'M' || body.gender === 'F' ? body.gender : null;
+  if (body.phone !== undefined) patch.phone = body.phone || null;
+  if (body.active !== undefined) patch.active = !!body.active;
+  if (Object.keys(patch).length === 0) return fail(res, 400, 'ไม่มีข้อมูลที่จะแก้ไข');
+
+  const { error } = await supabase.from('employees').update(patch).eq('code', code);
+  if (error) return fail(res, 500, error.message);
+  return json(res, 200, { ok: true });
 }
 
 // ---------------------------------------------------------------- schedule_import (v2)
