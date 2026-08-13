@@ -933,11 +933,11 @@ function renderStatus(id){
   const voucherBox = (b.status==='จองสำเร็จ' && b.voucher) ? `<div class="card"><div class="label">วอเชอร์เข้าพัก</div>
     <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc(b.voucher.code||'—')}</span></div>
     ${voucherLink?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(voucherLink)}" target="_blank" rel="noopener">เปิดวอเชอร์</a></span></div>`:''}</div>` : '';
-  const order=['ส่งคำขอ','ดำเนินการจอง','จองสำเร็จ'];
-  const labels={'ส่งคำขอ':'ส่งคำขอ','ดำเนินการจอง':'ดำเนินการจอง','จองสำเร็จ':'จองเสร็จแล้ว'};
+  const order=['ส่งคำขอ','อนุมัติพื้นที่แล้ว','ดำเนินการจอง','จองสำเร็จ'];
+  const labels={'ส่งคำขอ':'ส่งคำขอ','อนุมัติพื้นที่แล้ว':'อนุมัติพื้นที่แล้ว','ดำเนินการจอง':'ดำเนินการจอง','จองสำเร็จ':'จองเสร็จแล้ว'};
   const curIdx=(b.status==='ต้องแก้ไข'||b.status==='ติดปัญหา')?-1:order.indexOf(b.status);
   const tl=order.map((t,i)=>`<li class="${i<curIdx?'done':(i===curIdx?'now':'dim')}"><div class="dot"></div><div><div class="tt">${labels[t]}</div></div></li>`).join("");
-  const canChange=b.status!=='ส่งคำขอ' && b.status!=='ต้องแก้ไข';
+  const canChange=b.status!=='ส่งคำขอ' && b.status!=='ต้องแก้ไข' && b.status!=='อนุมัติพื้นที่แล้ว';
   const chips = canChange ? `<div class="chips">
       <div class="chip" onclick="renderChange('ลดจำนวนห้อง','${b.id}')">🛏️ ขอลดห้อง</div>
       <div class="chip" onclick="renderChange('ลดจำนวนคืน','${b.id}')">📅 ขอลดคืน</div>

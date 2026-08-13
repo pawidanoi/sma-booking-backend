@@ -124,6 +124,10 @@ async function doLogin(){
     const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
     ME = d.me;
     sessionStorage.setItem('dash_actor', code);
+    // Same reason logout() drops it: the upcoming render wipes #app (and the
+    // map's DOM container with it), so the stale Leaflet instance must go too
+    // or initDashMap()'s guard skips creating a new one on the fresh div.
+    if (DASH_MAP) { DASH_MAP.remove(); DASH_MAP=null; DASH_HIGHLIGHT=null; DASH_MEASURE=null; }
     await loadAndRender(code);
   }catch(e){ renderLogin(e.message); }
 }
