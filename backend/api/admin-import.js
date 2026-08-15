@@ -47,6 +47,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'area_approver_add') return areaApproverAdd(res, body);
     if (body.action === 'legacy_import') return legacyImport(res, body);
     if (body.action === 'employee_update') return employeeUpdate(res, body);
+    if (body.action === 'hotel_update_coords') return hotelUpdateCoords(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -726,6 +727,25 @@ async function hotelImport(res, body) {
     skipped: skipped.length,
     skipped_detail: skipped
   });
+}
+
+// ---------------------------------------------------------------- hotel_update_coords
+// Spot-fix for a single mis-geocoded hotel — found by cross-checking the
+// distance a booking form showed against the hotel's real listing on Google
+// Maps (a ปราจีนบุรี hotel batch had several entries pinned many km from
+// their real address despite the correct province). Rather than re-running
+// the whole province's hotelImport() (which replaces every unreferenced
+// hotel in that province), this only ever touches the one row named.
+
+async function hotelUpdateCoords(res, body) {
+  const code = String(body.code || '').trim();
+  const lat = Number(body.lat), lng = Number(body.lng);
+  if (!code) return fail(res, 400, 'ไม่ได้ระบุรหัสที่พัก');
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return fail(res, 400, 'พิกัดไม่ถูกต้อง');
+  const { data, error } = await supabase.from('hotels').update({ lat, lng }).eq('code', code).select('id, name').maybeSingle();
+  if (error) return fail(res, 500, error.message);
+  if (!data) return fail(res, 404, 'ไม่พบที่พักรหัสนี้');
+  return json(res, 200, { ok: true, name: data.name });
 }
 
 // ---------------------------------------------------------------- backfill_hotel_codes
