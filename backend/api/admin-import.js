@@ -32,6 +32,7 @@ module.exports = async function handler(req, res) {
     if (req.query.action === 'urgent_now') return urgentNow(res);
     if (req.query.action === 'cycle_time') return cycleTime(res);
     if (req.query.action === 'employee_list') return employeeList(res);
+    if (req.query.action === 'hotel_list') return hotelList(res);
     return fail(res, 400, `ไม่รู้จัก action: ${req.query.action}`);
   }
 
@@ -287,6 +288,15 @@ async function employeeList(res) {
     .order('team_code');
   if (error) return fail(res, 500, error.message);
   return json(res, 200, { employees: data || [] });
+}
+
+async function hotelList(res) {
+  const { data, error } = await supabase
+    .from('hotels')
+    .select('id, code, name, province, district, address, near_area, lat, lng, source, is_custom, active')
+    .order('province');
+  if (error) return fail(res, 500, error.message);
+  return json(res, 200, { hotels: data || [] });
 }
 
 async function employeeUpdate(res, body) {
