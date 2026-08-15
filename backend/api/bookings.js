@@ -19,6 +19,38 @@ async function logStatus(bookingId, fromStatus, toStatus, changedBy) {
   await supabase.from('booking_status_log').insert({ booking_id: bookingId, from_status: fromStatus, to_status: toStatus, changed_by: changedBy });
 }
 
+// A guest's employee_code on the web form can be free-typed (the "ไม่มีในทะเบียน —
+// กรอกเอง" path collects a code alongside the name), so a genuine new hire's code
+// can reach here before anyone's run the bulk employee import — that used to 500
+// on booking_guests' FK straight through to the employee. Auto-create a minimal
+// employee row instead, from whatever the guest row itself already carries (same
+// shape employee_home_import's create-path uses) — never overwrites an existing
+// employee, only fills in one that's genuinely missing.
+async function ensureEmployeesExist(guestRows) {
+  const codes = [...new Set(guestRows.map((g) => g.employee_code).filter(Boolean))];
+  if (!codes.length) return;
+  const { data: existing } = await supabase.from('employees').select('code').in('code', codes);
+  const knownCodes = new Set((existing || []).map((e) => e.code));
+  const missing = codes.filter((c) => !knownCodes.has(c));
+  if (!missing.length) return;
+
+  const byCode = new Map();
+  guestRows.forEach((g) => { if (missing.includes(g.employee_code) && !byCode.has(g.employee_code)) byCode.set(g.employee_code, g); });
+  const newEmployees = missing.map((code) => {
+    const g = byCode.get(code);
+    return {
+      code,
+      name: g.name,
+      team_code: g.team_code || null,
+      gender: g.gender === 'M' || g.gender === 'F' ? g.gender : null,
+      phone: g.phone || null,
+      active: true
+    };
+  });
+  const { error } = await supabase.from('employees').insert(newEmployees);
+  if (error) console.error('ensureEmployeesExist failed', error.message);
+}
+
 // bookings <-> booking_hotel_choices are joined BOTH ways (choices point at the booking,
 // and the booking points back at the one choice the admin picked), so the embed must name
 // the constraint explicitly or PostgREST refuses it as ambiguous.
@@ -256,6 +288,7 @@ async function createBooking(req, res, actor, body) {
     phone: g.phone || null,
     gender: g.gender
   }));
+  await ensureEmployeesExist(guestRows);
   const { error: gErr } = await supabase.from('booking_guests').insert(guestRows);
   if (gErr) {
     await supabase.from('bookings').delete().eq('id', id);
@@ -554,14 +587,16 @@ async function handlePatch(req, res, actor, isAdmin, body) {
     const { maleEmpty, femaleEmpty } = emptyBedsByGender(existing || []);
     const empty = guest.gender === 'M' ? maleEmpty : femaleEmpty;
     if (empty <= 0 && !force) return fail(res, 400, `ไม่มีเตียงว่างสำหรับเพศ${guest.gender === 'M' ? 'ชาย' : 'หญิง'}ในห้องนี้แล้ว`);
-    const { error } = await supabase.from('booking_guests').insert({
+    const newGuestRow = {
       booking_id,
       team_code: guest.team_code || null,
       employee_code: guest.employee_code || null,
       name: String(guest.name).trim(),
       phone: guest.phone || null,
       gender: guest.gender
-    });
+    };
+    await ensureEmployeesExist([newGuestRow]);
+    const { error } = await supabase.from('booking_guests').insert(newGuestRow);
     if (error) return fail(res, 500, error.message);
     return await respondFresh(res, booking_id);
   }
@@ -583,14 +618,16 @@ async function handlePatch(req, res, actor, isAdmin, body) {
     const empty = jr.guest_gender === 'M' ? maleEmpty : femaleEmpty;
     if (empty <= 0 && !force) return fail(res, 400, `ไม่มีเตียงว่างสำหรับเพศ${jr.guest_gender === 'M' ? 'ชาย' : 'หญิง'}ในห้องนี้แล้ว`);
 
-    await supabase.from('booking_guests').insert({
+    const joinGuestRow = {
       booking_id,
       team_code: jr.guest_team_code,
       employee_code: jr.guest_employee_code,
       name: jr.guest_name,
       phone: jr.guest_phone,
       gender: jr.guest_gender
-    });
+    };
+    await ensureEmployeesExist([joinGuestRow]);
+    await supabase.from('booking_guests').insert(joinGuestRow);
     await supabase.from('booking_join_requests').update({ status: 'accepted', decided_by_employee: actor.code, decided_at: new Date().toISOString() }).eq('id', join_request_id);
     return await respondFresh(res, booking_id);
   }
@@ -637,16 +674,16 @@ async function handlePatch(req, res, actor, isAdmin, body) {
     await supabase.from('booking_guests').delete().eq('booking_id', booking_id);
     await supabase.from('booking_hotel_choices').delete().eq('booking_id', booking_id);
 
-    await supabase.from('booking_guests').insert(
-      guests.map((g) => ({
-        booking_id,
-        team_code: g.team_code || actor.team_code,
-        employee_code: g.employee_code || null,
-        name: String(g.name).trim(),
-        phone: g.phone || null,
-        gender: g.gender
-      }))
-    );
+    const editGuestRows = guests.map((g) => ({
+      booking_id,
+      team_code: g.team_code || actor.team_code,
+      employee_code: g.employee_code || null,
+      name: String(g.name).trim(),
+      phone: g.phone || null,
+      gender: g.gender
+    }));
+    await ensureEmployeesExist(editGuestRows);
+    await supabase.from('booking_guests').insert(editGuestRows);
     await supabase.from('booking_hotel_choices').insert(
       hotel_choices.map((c, i) => ({
         booking_id,
