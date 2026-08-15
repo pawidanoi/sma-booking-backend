@@ -160,6 +160,16 @@ function haversine(lat1,lng1,lat2,lng2){
   const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
+// Straight-line (haversine) distance always underestimates the real drive since
+// roads curve — a provincial road can easily be 20-40% longer than as-the-crow-
+// flies, confirmed against a real route (Google Maps: 1.9km straight-line vs
+// 2.3km/actual road for a ปราจีนบุรี branch<->hotel pair). Applying a circuity
+// factor here gets every "ห่าง X กม." label and sort closer to a real drive
+// without calling the routing API per-hotel (a province can have 100+ hotels —
+// real routing is reserved for the few places that already call drivingDistance()
+// directly: the home-distance-rule and the dashboard's measure tool).
+const ROAD_CIRCUITY_FACTOR = 1.3;
+function roadKm(straightKm){ return straightKm==null ? null : straightKm*ROAD_CIRCUITY_FACTOR; }
 // Most branches in the registry were bulk-imported with lat/lng defaulted to
 // 0,0 (Null Island) rather than left blank — treat that the same as "no
 // coordinates yet" everywhere, or the distance features below compute a
@@ -268,8 +278,8 @@ function guestHomeDistanceTag(g,b){
     return `<span class="hint" style="font-size:11px">(ไม่มีข้อมูลที่อยู่ <a onclick="event.stopPropagation();promptAddGuestHome('${esc(g.code)}','${esc(b.id)}',${IS_AREA_APPROVER})" style="color:var(--brand);cursor:pointer;font-weight:700;text-decoration:none">+ เพิ่ม</a>)</span>`;
   }
   if(!hasBranchCoords(b)) return '';
-  const km = haversine(b.blat,b.blng,g.homeLat,g.homeLng);
-  return km!=null ? `<span class="hint" style="font-size:11px">(บ้าน–สาขา ${km.toFixed(1)} กม.)</span>` : '';
+  const km = roadKm(haversine(b.blat,b.blng,g.homeLat,g.homeLng));
+  return km!=null ? `<span class="hint" style="font-size:11px">(บ้าน–สาขา ~${km.toFixed(1)} กม.)</span>` : '';
 }
 async function promptAddGuestHome(code,bookingId,isArea){
   const link = prompt('วางลิงก์ Google Maps ตำแหน่งบ้านของรหัส '+code+' (หรือพิมพ์ lat,lng)');
@@ -287,10 +297,10 @@ async function promptAddGuestHome(code,bookingId,isArea){
 // derived from whatever coordinates its own Google Maps link encodes, same
 // parser branch-import already uses, so no schema change is needed for this.
 function hotelDistanceKm(h,b){
-  if(h.lat!=null && h.lng!=null && hasBranchCoords(b)) return haversine(b.blat,b.blng,h.lat,h.lng);
+  if(h.lat!=null && h.lng!=null && hasBranchCoords(b)) return roadKm(haversine(b.blat,b.blng,h.lat,h.lng));
   if(h.custom && h.map){
     const p=parseLatLngFromMapsUrl(h.map);
-    if(p.lat!=null && hasBranchCoords(b)) return haversine(b.blat,b.blng,p.lat,p.lng);
+    if(p.lat!=null && hasBranchCoords(b)) return roadKm(haversine(b.blat,b.blng,p.lat,p.lng));
   }
   return null;
 }
@@ -736,7 +746,7 @@ function renderForm(){
   let list;
   if (hasBranchCoords(j)) {
     list = HOTELS
-      .map(h => Object.assign({}, h, { _km: haversine(j.blat, j.blng, h.lat, h.lng) }))
+      .map(h => Object.assign({}, h, { _km: roadKm(haversine(j.blat, j.blng, h.lat, h.lng)) }))
       .filter(h => h.prov === effProv || (h._km != null && h._km <= NEARBY_KM))
       .sort((a,b) => (a._km==null?9999:a._km) - (b._km==null?9999:b._km));
   } else {
@@ -745,7 +755,7 @@ function renderForm(){
   }
   const renderHotelRow = (h) => {
     const sel=S.hotelPicks.some(x=>x.code===h.code);
-    const dist = h._km!=null ? `ห่าง ${h._km.toFixed(1)} กม.` : (h.near?('ใกล้ '+esc(h.near)):'');
+    const dist = h._km!=null ? `ห่าง ~${h._km.toFixed(1)} กม.` : (h.near?('ใกล้ '+esc(h.near)):'');
     const provTag = h.prov && h.prov!==effProv ? ` · จ.${esc(h.prov)}` : '';
     return `<div class="hotel ${sel?'sel':''}" role="checkbox" aria-checked="${sel}" tabindex="0"
         onclick="toggleHotel('${esc(h.code)}')"
@@ -1818,13 +1828,13 @@ function renderAdminDetail(id){
   const usedCodes = new Set(b.hotels.filter(h=>h.code).map(h=>h.code));
   const suggestions = (anyUnavailable && hasBCoords)
     ? HOTELS.filter(h => !usedCodes.has(h.code))
-        .map(h => Object.assign({}, h, { _km: haversine(b.blat,b.blng,h.lat,h.lng) }))
+        .map(h => Object.assign({}, h, { _km: roadKm(haversine(b.blat,b.blng,h.lat,h.lng)) }))
         .filter(h => h.prov===b.prov || (h._km!=null && h._km<=NEARBY_KM))
         .sort((x,y)=>(x._km==null?9999:x._km)-(y._km==null?9999:y._km))
         .slice(0,3)
     : [];
   const hotelSubtitle = h => {
-    const base = h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
+    const base = h._km!=null ? `ห่างจากสาขา ~${h._km.toFixed(1)} กม.`
       : h.custom ? 'ไม่มีข้อมูลระยะทาง' : esc(h.near||'-');
     const fixLink = (h.custom && h._km==null) ? ` <a onclick="event.stopPropagation();promptUpdateHotelLink('${esc(h.id)}','${esc(b.id)}',false)" style="color:var(--brand);cursor:pointer;font-weight:700;text-decoration:none">+ เพิ่มลิงก์</a>` : '';
     return `${base}${fixLink} ${mapLinkBtn(h.map)}`;
@@ -1855,7 +1865,7 @@ function renderAdminDetail(id){
   const altCard = suggestions.length ? `<div class="card" style="border-color:var(--success)">
     <div class="label" style="color:var(--success)">ที่พักที่แนะนำเพิ่ม — ใกล้สาขา จองแทนได้</div>
     ${suggestions.map(h=>`<div class="hotel" style="border-color:var(--success);margin-bottom:6px">
-      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h._km!=null?`ห่างจากสาขา ${h._km.toFixed(1)} กม.`:''}${h.prov&&h.prov!==b.prov?` · จ.${esc(h.prov)}`:''}</div></div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h._km!=null?`ห่างจากสาขา ~${h._km.toFixed(1)} กม.`:''}${h.prov&&h.prov!==b.prov?` · จ.${esc(h.prov)}`:''}</div></div>
       <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>
       <button class="btn ghost" style="margin:-2px 0 10px" onclick="addHotelChoiceForBooking('${b.id}','${esc(h.code)}')">เลือกที่นี่แทน</button>`).join("")}
     </div>` : '';
@@ -1968,7 +1978,7 @@ function renderAreaDetail(id){
   const nights=daysBetween(b.checkin,b.checkout)||1;
   const hasBCoords = hasBranchCoords(b);
   const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, { _km: hotelDistanceKm(h,b) }));
-  const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ${h._km.toFixed(1)} กม.`
+  const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ~${h._km.toFixed(1)} กม.`
     : h.custom ? 'ไม่มีข้อมูลระยะทาง' : esc(h.near||'-');
   const rc=rooms.map((r,k)=>{
     const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
