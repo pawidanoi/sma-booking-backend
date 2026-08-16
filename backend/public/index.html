@@ -36,19 +36,6 @@
     .phone{width:100%;max-width:none;height:auto;flex:1;min-height:0;border:0;border-radius:0;box-shadow:none}
     .statusbar{display:none}
   }
-  /* Desktop/tablet: the same fixed 390x800 phone-frame illustration (plus a
-     fake, never-changing "▲ 100%" battery) was rendering at 1280px wide too —
-     measured at 69% of the viewport left as decorative beige, with the app's
-     own single-viewport app-shell scroll (.screen{position:absolute}, sized
-     for a phone) creating a second, unnecessary inner scrollbar on top of the
-     normal page scroll. Above this width there's no viewport to simulate, so
-     drop the frame and let the page scroll like a normal desktop site. */
-  @media (min-width:700px){
-    body{height:auto;padding:24px 16px 48px}
-    .phone{width:100%;max-width:820px;height:auto;border:0;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.10)}
-    .statusbar{display:none}
-    .screen{position:static}
-  }
   .appbar{background:var(--brand);color:#fff;padding:6px 16px 14px;display:flex;align-items:center;gap:10px;border-bottom:3px solid var(--gold)}
   .appbar .back{font-size:20px;cursor:pointer;width:24px;opacity:.9}
   .appbar h1{font-size:16px;margin:0;font-weight:700;flex:1}
@@ -155,6 +142,22 @@
   .errtext{font-size:12.5px;color:var(--danger);font-weight:700;margin-top:8px}
   .navlink{display:block;text-align:center;font-size:12.5px;font-weight:700;color:var(--brand);padding:10px;cursor:pointer;text-decoration:none}
   .maplink{color:var(--brand);text-decoration:none;font-weight:600;white-space:nowrap}
+  /* Desktop/tablet: the same fixed 390x800 phone-frame illustration (plus a
+     fake, never-changing "▲ 100%" battery) was rendering at 1280px wide too —
+     measured at 69% of the viewport left as decorative beige, with the app's
+     own single-viewport app-shell scroll (.screen{position:absolute}, sized
+     for a phone) creating a second, unnecessary inner scrollbar on top of the
+     normal page scroll. Above this width there's no viewport to simulate, so
+     drop the frame and let the page scroll like a normal desktop site.
+     Placed last on purpose — .screen/.body/.phone are (re)defined earlier in
+     this sheet with equal specificity, and a same-specificity override only
+     wins by coming later in source order, media query or not. */
+  @media (min-width:700px){
+    body{height:auto;padding:24px 16px 48px}
+    .phone{width:100%;max-width:820px;height:auto;border:0;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.10)}
+    .statusbar{display:none}
+    .screen{position:static}
+  }
 </style>
 </head>
 <body>
