@@ -72,6 +72,8 @@
 <div id="app"></div>
 <script>
 const API = '/api';
+// Shared with index.html so logging in on one keeps you logged in on the other.
+const ACTOR_STORAGE_KEY = 'sma_actor_code';
 const $ = s => document.querySelector(s);
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmtMoney(v){ return "฿" + Math.round(v||0).toLocaleString("th-TH"); }
@@ -123,7 +125,7 @@ async function doLogin(){
   try{
     const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
     ME = d.me;
-    sessionStorage.setItem('dash_actor', code);
+    localStorage.setItem(ACTOR_STORAGE_KEY, code);
     // Same reason logout() drops it: the upcoming render wipes #app (and the
     // map's DOM container with it), so the stale Leaflet instance must go too
     // or initDashMap()'s guard skips creating a new one on the fresh div.
@@ -141,12 +143,12 @@ async function loadAndRender(actorCode){
     ALL_RECORDS = d.records || [];
     DASH_HOMES = d.employee_homes || [];
     captureRegistries(d);
-    if (!d.logged_in) { ME = null; sessionStorage.removeItem('dash_actor'); }
+    if (!d.logged_in) { ME = null; localStorage.removeItem(ACTOR_STORAGE_KEY); }
     renderDashboard(d);
   }catch(e){
     // Data failed to load at all (network issue, etc.) — this is the one
     // case worth a real error screen, distinct from "just not logged in".
-    ME = null; sessionStorage.removeItem('dash_actor');
+    ME = null; localStorage.removeItem(ACTOR_STORAGE_KEY);
     $("#app").innerHTML = `<div class="loginbox"><h2>โหลดข้อมูลไม่สำเร็จ</h2><div class="err">${esc(e.message)}</div>
       <button class="xlbtn" style="margin-top:10px" onclick="loadAndRender()">ลองใหม่</button></div>`;
   }
@@ -631,7 +633,7 @@ function exportAllToExcel(){
 }
 
 function logout(){
-  sessionStorage.removeItem('dash_actor'); ME=null;
+  localStorage.removeItem(ACTOR_STORAGE_KEY); ME=null;
   // renderDashboard() wipes #app, taking the map's DOM container with it —
   // drop the stale Leaflet instance too or the next render would draw onto
   // a detached map. Goes back to the anonymous public view, not a login wall.
@@ -644,10 +646,10 @@ function logout(){
 // actor code (from a previous voluntary login) silently re-unlocks the
 // employee-home layer; anything else falls back to the anonymous view.
 (async function boot(){
-  const saved = sessionStorage.getItem('dash_actor');
+  const saved = localStorage.getItem(ACTOR_STORAGE_KEY);
   if(saved){
     try{ ME = (await apiGet('/bootstrap?code='+encodeURIComponent(saved))).me; }
-    catch(e){ sessionStorage.removeItem('dash_actor'); }
+    catch(e){ localStorage.removeItem(ACTOR_STORAGE_KEY); }
   }
   await loadAndRender(saved);
 })();

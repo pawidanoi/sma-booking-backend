@@ -36,12 +36,41 @@
     .phone{width:100%;max-width:none;height:auto;flex:1;min-height:0;border:0;border-radius:0;box-shadow:none}
     .statusbar{display:none}
   }
+  /* Desktop/tablet: the same fixed 390x800 phone-frame illustration (plus a
+     fake, never-changing "▲ 100%" battery) was rendering at 1280px wide too —
+     measured at 69% of the viewport left as decorative beige, with the app's
+     own single-viewport app-shell scroll (.screen{position:absolute}, sized
+     for a phone) creating a second, unnecessary inner scrollbar on top of the
+     normal page scroll. Above this width there's no viewport to simulate, so
+     drop the frame and let the page scroll like a normal desktop site. */
+  @media (min-width:700px){
+    body{height:auto;padding:24px 16px 48px}
+    .phone{width:100%;max-width:820px;height:auto;border:0;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.10)}
+    .statusbar{display:none}
+    .screen{position:static}
+  }
   .appbar{background:var(--brand);color:#fff;padding:6px 16px 14px;display:flex;align-items:center;gap:10px;border-bottom:3px solid var(--gold)}
   .appbar .back{font-size:20px;cursor:pointer;width:24px;opacity:.9}
   .appbar h1{font-size:16px;margin:0;font-weight:700;flex:1}
   .appbar .sub{font-size:11px;opacity:.8;font-weight:500}
+  /* Admin's function hub — was 11 nav links squeezed into a single flex-nowrap
+     row inside .appbar (measured down to 16-22px wide, text wrapping 5 lines
+     tall). Moved out of the branded header into its own wrapping, grouped
+     surface with real tap targets instead. */
+  .adminnav{margin-bottom:14px}
+  .adminnav .grp{margin-bottom:10px}
+  .adminnav .grp:last-child{margin-bottom:0}
+  .adminnav .grp-label{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin:0 0 6px}
+  .adminnav .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .adminnav .chip{display:inline-flex;align-items:center;min-height:40px;padding:8px 14px;border-radius:20px;background:var(--surface);border:1.5px solid var(--line);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;color:var(--ink)}
+  .adminnav .chip:hover{border-color:var(--brand)}
+  .adminnav .chip.urgent{background:var(--danger-soft);border-color:var(--danger);color:var(--danger);font-weight:700}
   .screen{position:absolute;inset:0;display:flex;flex-direction:column}
   .body{flex:1;overflow-y:auto;padding:16px}
+  /* Admin/AREA detail's decision buttons used to sit at the bottom of a
+     2,900px-tall document with no way to reach them without scrolling past
+     the whole guest list, map and hotel list first. Pin them instead. */
+  .stickyactions{position:sticky;bottom:-16px;margin:12px -16px -16px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:var(--paper);border-top:1px solid var(--line);box-shadow:0 -6px 16px rgba(0,0,0,.06)}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
   .card h2{font-size:14px;margin:0 0 4px}
   .label{font-size:11px;color:var(--muted);font-weight:600;margin-bottom:5px}
@@ -57,6 +86,7 @@
   .btn.danger{background:var(--danger)}
   .btn:disabled{background:#c7c7c7;cursor:not-allowed}
   .job{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:10px;cursor:pointer}
+  .job.static{cursor:default}
   .job:active{background:#fff3da}
   .job .d{background:var(--brand-soft);color:var(--brand);border-radius:11px;width:46px;height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;line-height:1.05}
   .job .d small{font-size:9px;font-weight:600}
@@ -72,6 +102,12 @@
   .hotel .n{flex:1}.hotel .n .t{font-weight:600;font-size:13.5px}.hotel .n .s{font-size:11px;color:var(--muted)}
   .hotel .n .s a{color:var(--brand);font-weight:600}
   .hotel .p{font-weight:700;font-size:14px}
+  /* The only door to 82% of a province's hotel inventory used to be an 11px
+     muted-grey line with list-style:none (no marker at all) — no visual sign
+     it opened anything. Real button look + an explicit chevron instead. */
+  .disclosure{display:flex;align-items:center;gap:8px;cursor:pointer;padding:11px 14px;margin:4px 0 9px;background:var(--surface);border:1.5px solid var(--line);border-radius:13px;font-size:13px;font-weight:700;color:var(--brand)}
+  .disclosure::before{content:'▸';font-size:11px;transition:transform .15s}
+  details[open]>.disclosure::before{transform:rotate(90deg)}
   .hotel.radio .chk{border-radius:50%}
   .rmv{font-size:11px;color:var(--danger);font-weight:700;cursor:pointer}
   .gt{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px}
@@ -102,9 +138,14 @@
   .copyrow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
   .copyrow:last-child{border-bottom:0}.copyrow .k{font-size:11px;color:var(--muted);font-weight:600;min-width:50px}
   .copyrow .v{font-size:12.5px;font-weight:600;text-align:right;flex:1;margin:0 8px;line-height:1.4;word-break:break-word}
-  .copyrow .cp{font-size:11px;color:var(--brand);font-weight:700;border:1px solid var(--brand);border-radius:8px;padding:4px 8px;cursor:pointer;white-space:nowrap}
+  .copyrow .cp{font-size:11px;color:var(--brand);font-weight:700;border:1px solid var(--brand);border-radius:8px;padding:6px 10px;min-height:32px;display:inline-flex;align-items:center;cursor:pointer;white-space:nowrap}
   .hint{font-size:11px;color:var(--muted);margin:2px 0 12px}
   .addnew{border:1.5px dashed var(--line);border-radius:12px;padding:11px;text-align:center;color:var(--brand);font-weight:700;font-size:13px;cursor:pointer;margin-top:6px}
+  /* Distinct from .addnew ("+ add new X") on purpose — copying the whole
+     guest list is the admin's single most-used action on this screen, was
+     styled identically to "create new" and buried below 22 individual
+     per-field copy buttons. Solid brand fill + placed above them instead. */
+  .copyall{background:var(--brand);color:#fff;border-radius:12px;padding:12px;text-align:center;font-weight:700;font-size:13.5px;cursor:pointer;margin-bottom:10px}
   .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
   .chip{border:1.5px solid var(--line);border-radius:11px;padding:11px 12px;font-size:13px;font-weight:600;cursor:pointer;flex:1;text-align:center;min-width:44%}
   .chip:active{background:#fff3da}
@@ -121,7 +162,7 @@
 <div class="phone">
   <div class="statusbar"><span id="clock">9:41</span><span>SMA จองที่พัก</span><span>▲ 100%</span></div>
   <div id="app"></div>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </div>
 <script>
 /* =========================================================================
@@ -146,13 +187,28 @@ let S = {}, CH = {}, VOUCH = {}, REJ = {}, ADDG = {}, JOINQ = {}, DEP = {};
 let SPARE_LIST = [], DEPCLAIMS = [];
 
 const $ = s => document.querySelector(s);
-function toast(t){ const e=$("#toast"); e.textContent=t; e.classList.add("show"); setTimeout(()=>e.classList.remove("show"),2200); }
-function rerender(fn){ const b=document.querySelector('.body'); const y=b?b.scrollTop:0; fn(); const nb=document.querySelector('.body'); if(nb)nb.scrollTop=y; }
+let TOAST_TIMER=null;
+// role=status/aria-live is on the element itself (set once in the static markup)
+// so screen readers announce every message, not just visual ones. Longer
+// messages are usually server error text, not "Saved ✓" — worth more time on
+// screen before it vanishes. clearTimeout guards a fast second toast from
+// getting cut short by the first one's already-scheduled hide.
+function toast(t){ const e=$("#toast"); if(!e) return; e.textContent=t; e.classList.add("show"); if(TOAST_TIMER) clearTimeout(TOAST_TIMER); TOAST_TIMER=setTimeout(()=>e.classList.remove("show"), String(t).length>30?5000:2200); }
+function rerender(fn){ const b=document.querySelector('.body'); const y=b?b.scrollTop:0; fn(); const nb=document.querySelector('.body'); if(nb)nb.scrollTop=y; if(fn===renderForm) saveFormDraft(); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function nickOf(p){ return String(p&&(p.nickname||p.nick)||'').replace(/\s*[ชญ]\s*$/,'').trim() || (p&&p.name) || ''; }
 function isSpecialRole(pos){ return SPECIAL_POS.includes(pos); }
-function fmtDate(s){ if(!s) return "—"; const d=new Date(s); return d.getDate()+" "+THMONTH[d.getMonth()]+" "+(d.getFullYear()+543-2000); }
+function navChip(label, fn, extraClass){ return `<span class="chip${extraClass?' '+extraClass:''}" role="button" tabindex="0" onclick="${fn}" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();${fn}}">${label}</span>`; }
+function copyChip(argExpr){ const fn=`copyTxt(${argExpr})`; return `<span class="cp" role="button" tabindex="0" onclick="${fn}" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();${fn}}">คัดลอก</span>`; }
+function fmtDate(s){ if(!s) return "—"; const d=new Date(s); return d.getDate()+" "+THMONTH[d.getMonth()]+" "+String(d.getFullYear()+543).slice(-2); }
 function daysBetween(a,b){ if(!a||!b) return 0; return Math.max(0, Math.round((new Date(b)-new Date(a))/86400000)); }
+// Both date <input>s shipped with no min/max — nothing stopped a check-in in
+// 2019 or 2031, and combined with the fmtDate BE-year bug the user had no way
+// to sanity-check what they'd picked. min=today (bookings are always forward),
+// max=+1 year (generous ceiling, not a real business rule to enforce tightly).
+function dateISO(d){ return d.toISOString().slice(0,10); }
+function dateInputMin(){ return dateISO(new Date()); }
+function dateInputMax(){ const d=new Date(); d.setFullYear(d.getFullYear()+1); return dateISO(d); }
 function haversine(lat1,lng1,lat2,lng2){
   if(lat1==null||lng1==null||lat2==null||lng2==null) return null;
   const R=6371, toRad=d=>d*Math.PI/180;
@@ -313,7 +369,7 @@ function statusLogHtml(b){
     const to = STATUS_LOG_LABEL[l.to_status]||l.to_status;
     return `<div class="copyrow"><span class="k">${esc(when)}</span><span class="v">${esc(to)} — ${esc(who)}</span></div>`;
   }).join('');
-  return `<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">ประวัติการเปลี่ยนสถานะ (${b.statusLog.length})</summary><div class="card" style="margin-top:6px">${rows}</div></details>`;
+  return `<details style="margin-top:10px"><summary class="disclosure">ประวัติการเปลี่ยนสถานะ (${b.statusLog.length})</summary><div class="card" style="margin-top:6px">${rows}</div></details>`;
 }
 async function promptUpdateHotelLink(choiceId,bookingId,isArea){
   const link = prompt('วางลิงก์ Google Maps ของที่พักนี้ (ใช้คำนวณระยะทางและเปิดดูรีวิวได้)');
@@ -427,7 +483,7 @@ function renderLogin(err){
    </div></div>`;
   const el=$("#code"); if(el) el.focus();
 }
-function logout(){ renderLogin(); }
+function logout(){ clearActorCode(); renderLogin(); }
 
 async function doLogin(){
   const code=(($("#code")||{}).value||'').trim();
@@ -440,6 +496,14 @@ async function doLogin(){
     renderLogin(e.message);
   }
 }
+
+// Shared with dashboard.html so logging in on one keeps you logged in on the
+// other. localStorage (not sessionStorage) so it survives the tab being
+// killed/reopened — the exact scenario a field employee hits on a flaky
+// connection or when LINE's in-app browser reclaims memory mid-form.
+const ACTOR_STORAGE_KEY = 'sma_actor_code';
+function saveActorCode(code){ try{ localStorage.setItem(ACTOR_STORAGE_KEY, code); }catch(e){} }
+function clearActorCode(){ try{ localStorage.removeItem(ACTOR_STORAGE_KEY); }catch(e){} }
 
 async function applyBootstrap(d){
   ME = d.me;
@@ -454,28 +518,43 @@ async function applyBootstrap(d){
   BRANCH_BY_CODE={}; BRANCHES.forEach(b=>{ BRANCH_BY_CODE[b.code]=b; });
   PROVINCES=[...new Set(HOTELS.filter(h=>h.prov).map(h=>h.prov))].sort();
   if(d.constants && d.constants.mission_types) MISSION_TYPES = d.constants.mission_types;
+  saveActorCode(ME.code);
   updateRolebar();
   await reloadBookings(false);
   goHome();
 }
 
+// Tries, in order: LINE LIFF auto-login (already-linked LINE account) → a
+// previously saved employee code from this browser → the manual login form.
 // Opened inside LINE via the /home LIFF link — if this LINE account was already
 // linked to an employee (by chatting "ผูกบัญชี" with มะม่วง), skip manual code
 // entry entirely. Falls straight through to the normal login form otherwise,
 // including when opened in a plain browser (no liff global, or not in a LIFF client).
+async function tryStoredLogin(){
+  let code; try{ code = localStorage.getItem(ACTOR_STORAGE_KEY); }catch(e){ return false; }
+  if(!code) return false;
+  try{
+    const d = await apiGet('/bootstrap?code='+encodeURIComponent(code));
+    await applyBootstrap(d);
+    return true;
+  }catch(e){
+    clearActorCode();
+    return false;
+  }
+}
 async function tryLiffAutoLogin(){
-  if (typeof liff === 'undefined') { renderLogin(); return; }
+  if (typeof liff === 'undefined') { if(!(await tryStoredLogin())) renderLogin(); return; }
   try{
     const cfgRes = await fetch('/api/liff-config');
     const cfg = await cfgRes.json();
     if (!cfgRes.ok) throw new Error(cfg.error);
     await liff.init({ liffId: cfg.liffId });
-    if (!liff.isInClient()) { renderLogin(); return; }
+    if (!liff.isInClient()) { if(!(await tryStoredLogin())) renderLogin(); return; }
     const profile = await liff.getProfile();
     const d = await apiGet('/bootstrap?line_user_id='+encodeURIComponent(profile.userId));
     await applyBootstrap(d);
   }catch(e){
-    renderLogin();
+    if(!(await tryStoredLogin())) renderLogin();
   }
 }
 
@@ -504,10 +583,10 @@ function renderHome(){
   const rows=jobs.map(j=>{
     const already=BOOKINGS.find(b=>b.jobId===j.id);
     const badge = already ? pillOf(already)
-      : (j.adv?`<span class="pill soon">เข้าก่อน ${j.adv} วัน</span>`:`<span class="pill ok">ยังไม่ได้จอง</span>`);
+      : (j.adv?`<span class="pill soon">เข้าก่อน ${j.adv} วัน</span>`:`<span class="pill wait">ยังไม่ได้จอง</span>`);
     const d=new Date(j.start);
     const onClick = already ? `renderStatus('${already.id}')` : `openForm('${j.id}')`;
-    return `<div class="job" onclick="${onClick}"><div class="d">${d.getDate()}<small>${THMONTH[d.getMonth()]}</small></div>
+    return `<div class="job" role="button" tabindex="0" onclick="${onClick}" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();${onClick}}"><div class="d">${d.getDate()}<small>${THMONTH[d.getMonth()]}</small></div>
      <div class="g"><div class="t">${esc(j.branch)}</div>
       <div class="s">งาน ${fmtDate(j.start)}–${fmtDate(j.end)}${j.prov?(' · จ.'+esc(j.prov)):''}</div>
       <div style="margin-top:5px">${badge}</div></div><div class="chev">›</div></div>`;
@@ -517,7 +596,7 @@ function renderHome(){
   // (avoid listing the same booking twice if it happens to match a job).
   const jobIdsShown = new Set(jobs.map(j=>j.id));
   const mine = BOOKINGS.filter(b=>b.submittedByCode===ME.code && !(b.jobId && jobIdsShown.has(b.jobId)));
-  const mineRows = mine.map(b=>`<div class="job" onclick="renderStatus('${b.id}')">
+  const mineRows = mine.map(b=>`<div class="job" role="button" tabindex="0" onclick="renderStatus('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderStatus('${b.id}')}">
     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${(b.derived.people!=null?b.derived.people:0)}<small>คน</small></div>
     <div class="g"><div class="t">${esc(b.branch)}</div><div class="s">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
      <div style="margin-top:5px">${pillOf(b)}</div></div><div class="chev">›</div></div>`).join("");
@@ -533,7 +612,7 @@ function renderHome(){
 
 function renderSpecialHome(){
   const mine=BOOKINGS.filter(b=>b.submittedByCode===ME.code);
-  const rows=mine.map(b=>`<div class="job" onclick="renderStatus('${b.id}')">
+  const rows=mine.map(b=>`<div class="job" role="button" tabindex="0" onclick="renderStatus('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderStatus('${b.id}')}">
     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${(b.derived.people!=null?b.derived.people:0)}<small>คน</small></div>
     <div class="g"><div class="t">${esc(b.branch)}</div><div class="s">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
      <div style="margin-top:5px">${pillOf(b)}</div></div><div class="chev">›</div></div>`).join("");
@@ -546,14 +625,39 @@ function renderSpecialHome(){
 }
 
 /* ================= ฟอร์มขอที่พัก ================= */
+// Draft key is per-job (or a single fixed slot for ad-hoc) so reopening the
+// same unbooked job recovers a half-filled form after a killed tab/app —
+// the most damaging gap found in the UX review for field staff on flaky
+// connections. Silently restored, no prompt: worst case the employee edits
+// what they see, same as any other pre-filled form.
+function draftKey(scheduleId){ return 'sma_draft_'+(scheduleId||'adhoc'); }
+function loadFormDraft(scheduleId){
+  let raw; try{ raw = localStorage.getItem(draftKey(scheduleId)); }catch(e){ return null; }
+  if(!raw) return null;
+  try{
+    const parsed = JSON.parse(raw);
+    if(!parsed || !parsed.S || (Date.now()-parsed.savedAt) > 24*3600*1000) return null;
+    return parsed.S;
+  }catch(e){ return null; }
+}
+function saveFormDraft(){
+  if(!S || !S.job || S.editId) return; // never autosave over an edit of an already-submitted booking
+  try{ localStorage.setItem(draftKey(S.job.id), JSON.stringify({ savedAt: Date.now(), S })); }catch(e){}
+}
+function clearFormDraft(scheduleId){ try{ localStorage.removeItem(draftKey(scheduleId)); }catch(e){} }
+
 function openForm(scheduleId){
   const j=jobsForMyTeam().find(x=>String(x.id)===String(scheduleId));
   if(!j){ toast('ไม่พบงานนี้'); return; }
+  const draft=loadFormDraft(scheduleId);
+  if(draft){ S=draft; toast('กู้คืนแบบฟอร์มที่กรอกค้างไว้ให้แล้ว'); renderForm(); return; }
   S={ editId:null, job:j, manualProv:null, checkin:j.start, checkout:j.end,
       hotelPicks:[], addingHotel:false, newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", busy:false };
   renderForm();
 }
 function openAdhocForm(){
+  const draft=loadFormDraft(null);
+  if(draft){ S=draft; toast('กู้คืนแบบฟอร์มที่กรอกค้างไว้ให้แล้ว'); renderForm(); return; }
   S={ editId:null, job:{ id:null, branchCode:'', branch:'', prov:null, start:'', end:'', adv:0, blat:null, blng:null, adhoc:true },
       manualProv:null, checkin:'', checkout:'', hotelPicks:[], addingHotel:false,
       newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", missionType:'', missionNote:'', busy:false };
@@ -762,7 +866,7 @@ function renderForm(){
         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleHotel('${esc(h.code)}')}">
       <div class="chk">${sel?'✓':''}</div>
       <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
-      <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
+      <div class="p">${h.price!=null?h.price+'฿<br><small style="font-weight:500;opacity:.7">/ห้อง/คืน</small>':'—'}</div></div>`;
   };
   // Grouped by distance so a 30+ item list isn't one undifferentiated scroll —
   // near options (the ones that matter most) show immediately, farther ones
@@ -776,7 +880,7 @@ function renderForm(){
     const far = list.filter(h => h._km!=null && h._km>10);
     const nearHtml = near.map(renderHotelRow).join("");
     const farHtml = far.length ? `<details ${near.length?'':'open'} style="margin-top:4px">
-        <summary class="hint" style="cursor:pointer;margin:0 0 9px;list-style:none">ที่พักไกลกว่า 10 กม. (${far.length} แห่ง) — แตะเพื่อดู</summary>
+        <summary class="disclosure">ที่พักไกลกว่า 10 กม. (${far.length} แห่ง) — แตะเพื่อดู</summary>
         ${far.map(renderHotelRow).join("")}
       </details>` : '';
     hotelHtml = nearHtml + farHtml;
@@ -843,6 +947,20 @@ function renderForm(){
   const ready = !S.busy && S.hotelPicks.length>0 && dateOk && ppl>0 && namesOk && !!effProv && (!j.adhoc || j.branchCode) && missionOk;
   const priceWarn = S.hotelPicks.some(h=>(h.price||0)>600)
     ? `<div class="warn a">⚠️ มีที่พักราคาเกิน 600฿/ห้อง/คืน — ระบุเหตุผลในหมายเหตุด้วย</div>` : '';
+  // The submit button used to just go grey with no explanation for 5 of its
+  // 6 gating conditions (only missing-names had a message) — list everything
+  // still missing so a rushed or first-time user isn't left guessing why
+  // nothing happens when they tap it.
+  const missingReasons = [];
+  if (!effProv) missingReasons.push('เลือกจังหวัด');
+  if (j.adhoc && !j.branchCode) missingReasons.push('เลือกสาขา');
+  if (!(S.checkin && S.checkout)) missingReasons.push('เลือกวันเข้าพัก-วันออก');
+  if (S.hotelPicks.length===0) missingReasons.push('เลือกที่พักอย่างน้อย 1 ที่');
+  if (ppl===0) missingReasons.push('ระบุจำนวนผู้เข้าพัก');
+  if (ppl>0 && !namesOk) missingReasons.push('กรอกชื่อ/รหัสผู้เข้าพักให้ครบ');
+  if (!missionOk) missingReasons.push('ระบุประเภทภารกิจ');
+  const readyWarn = (!ready && !S.busy && missingReasons.length)
+    ? `<div class="warn d">⚠️ ก่อนส่งคำขอ ต้อง: ${missingReasons.join(' · ')}</div>` : '';
 
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span>
     <div style="flex:1"><h1>${S.editId?'แก้ไขคำขอ':(j.adhoc?'จองเพิ่ม':'ขอที่พัก')}</h1><span class="sub">${esc(j.branch||'เลือกสาขา')}</span></div></div>
@@ -850,8 +968,8 @@ function renderForm(){
     ${branchCard}${branchPicker}${provPicker}${homeAddrCard}${homeWarnCard}${mapCard}${missionCard}
     <div class="card"><div class="label">วันเข้าพัก – วันออก (เลือกเอง)</div>
      <div style="display:flex;gap:10px">
-      <input class="txt" type="date" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
-      <input class="txt" type="date" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
+      <input class="txt" type="date" min="${dateInputMin()}" max="${dateInputMax()}" value="${esc(S.checkin)}" onchange="S.checkin=this.value;rerender(renderForm)"/>
+      <input class="txt" type="date" min="${dateInputMin()}" max="${dateInputMax()}" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
      ${S.checkin&&S.checkout&&!dateOk?`<div class="errtext">วันออกต้องหลังวันเข้าพัก</div>`:''}
      ${nights>0?`<div class="hint" style="margin:6px 0 0">${nights} คืน</div>`:''}</div>
     ${effProv?`<div class="card"><div class="label">เลือกที่พัก ${hasBranchCoords(j)?`— จ.${esc(effProv)} หรือใกล้เคียงในระยะ 30 กม. (เรียงตามระยะทาง)`:`— ใน จ.${esc(effProv)} (เรียงตามราคา)`} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
@@ -867,7 +985,7 @@ function renderForm(){
       <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px">
        <span style="color:var(--muted)">คน ${ppl} · ห้อง ${rooms.length}</span><strong>รวม ~${cost.toLocaleString()}฿</strong></div></div>`:''}
     <div class="card"><div class="label">หมายเหตุ</div><textarea class="txt" placeholder="โน้ตถึงแอดมิน" oninput="S.note=this.value">${esc(S.note||'')}</textarea></div>
-    ${ppl>0&&!namesOk?`<div class="warn d">⚠️ ยังมีผู้เข้าพักที่ไม่มีชื่อ — เลือกรหัสพนักงานหรือกรอกชื่อให้ครบก่อนส่ง</div>`:''}
+    ${readyWarn}
     <button class="btn" ${ready?'':'disabled'} onclick="submitBooking()">${S.busy?'กำลังส่ง…':(S.editId?'ส่งคำขอที่แก้ไขแล้ว':'ส่งคำขอให้แอดมิน')}</button>
     <div class="hint" style="text-align:center">แอดมินจะตรวจ → จองบนชูวับ → ส่งวอเชอร์กลับ</div></div></div>`;
   renderBookingMap();
@@ -885,11 +1003,11 @@ function renderBookingMap(){
   }).addTo(map);
 
   const pts = [];
-  function pin(lat, lng, label, color){
+  function pin(lat, lng, label, color, title){
     if (lat==null || lng==null || lat===0 || lng===0) return;
     const icon = L.divIcon({
       className:'',
-      html:`<div style="width:26px;height:26px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+      html:`<div role="img" aria-label="${esc(title||'')}" style="width:26px;height:26px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
       iconSize:[26,26], iconAnchor:[13,13]
     });
     L.marker([lat,lng], {icon}).addTo(map);
@@ -897,8 +1015,8 @@ function renderBookingMap(){
   }
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const j = S.job;
-  if (hasBranchCoords(j)) pin(j.blat, j.blng, '🏪', cssVar('--brand'));
-  S.hotelPicks.forEach(h => { if (h.lat!=null) pin(h.lat, h.lng, '🏨', cssVar('--amber')); });
+  if (hasBranchCoords(j)) pin(j.blat, j.blng, '🏪', cssVar('--brand'), 'สาขา '+(j.branch||''));
+  S.hotelPicks.forEach(h => { if (h.lat!=null) pin(h.lat, h.lng, '🏨', cssVar('--amber'), 'ที่พัก '+(h.name||'')); });
 
   if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });
   else if (pts.length === 1) map.setView(pts[0], 14);
@@ -921,11 +1039,11 @@ function renderAdminMap(b, suggestions){
 
   const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const pts = [];
-  function pin(lat, lng, label, color, opts){
+  function pin(lat, lng, label, color, opts, title){
     if (lat==null || lng==null || lat===0 || lng===0) return;
     const icon = L.divIcon({
       className:'',
-      html:`<div style="width:26px;height:26px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
+      html:`<div role="img" aria-label="${esc(title||'')}" style="width:26px;height:26px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:15px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)">${label}</div>`,
       iconSize:[26,26], iconAnchor:[13,13]
     });
     const mk = L.marker([lat,lng], {icon});
@@ -933,16 +1051,16 @@ function renderAdminMap(b, suggestions){
     mk.addTo(map);
     pts.push([lat,lng]);
   }
-  if (hasBranchCoords(b)) pin(b.blat, b.blng, '🏪', cssVar('--brand'));
+  if (hasBranchCoords(b)) pin(b.blat, b.blng, '🏪', cssVar('--brand'), null, 'สาขา '+(b.branch||''));
   (b.hotels||[]).forEach(h => {
     if (h.lat==null) return;
-    pin(h.lat, h.lng, h.unavailable ? '🚫' : '🏨', h.unavailable ? '#9a9a9a' : cssVar('--amber'));
+    pin(h.lat, h.lng, h.unavailable ? '🚫' : '🏨', h.unavailable ? '#9a9a9a' : cssVar('--amber'), null, (h.unavailable?'ที่พักเต็มแล้ว ':'ที่พัก ')+(h.name||''));
   });
   (suggestions||[]).forEach(h => {
     if (h.lat==null) return;
     const popup = `<div style="font-size:12.5px"><strong>${esc(h.name)}</strong><br>${h.price!=null?h.price+'฿':''}
       <br><button class="btn" style="margin-top:6px;padding:6px 10px;font-size:12px" onclick="addHotelChoiceForBooking('${b.id}','${esc(h.code)}')">เลือกที่นี่แทน</button></div>`;
-    pin(h.lat, h.lng, '⭐', cssVar('--success'), { popup });
+    pin(h.lat, h.lng, '⭐', cssVar('--success'), { popup }, 'ที่พักแนะนำ '+(h.name||''));
   });
 
   if (pts.length > 1) map.fitBounds(pts, { padding:[28,28] });
@@ -982,6 +1100,7 @@ async function submitBooking(){
       if(r.warnings && r.warnings.length) toast('ส่งคำขอแล้ว — แต่มีคนจองซ้อนวัน: '+r.warnings[0]);
       else toast('ส่งคำขอให้แอดมินแล้ว ✓');
     }
+    clearFormDraft(S.job.adhoc ? null : S.job.id);
     await reloadBookings(false);
     const target = S.editId || (BOOKINGS[0] && BOOKINGS[0].id);
     S.busy=false;
@@ -1050,8 +1169,8 @@ function drawChange(){
   if(kind==='ลดจำนวนห้อง'){
     body=`<div class="hint">จำนวนห้องใหม่</div><div class="stepper"><button onclick="chgRooms(-1)">−</button><span>${CH.rooms}</span><button onclick="chgRooms(1)">＋</button></div>`;
   } else if(kind==='ลดจำนวนคืน'){
-    body=`<div class="label">วันเช็คอินใหม่</div><input class="txt" type="date" value="${esc(CH.checkin)}" onchange="CH.checkin=this.value"/>
-      <div class="label" style="margin-top:10px">วันเช็คเอาท์ใหม่</div><input class="txt" type="date" value="${esc(CH.checkout)}" onchange="CH.checkout=this.value"/>`;
+    body=`<div class="label">วันเช็คอินใหม่</div><input class="txt" type="date" min="${dateInputMin()}" max="${dateInputMax()}" value="${esc(CH.checkin)}" onchange="CH.checkin=this.value"/>
+      <div class="label" style="margin-top:10px">วันเช็คเอาท์ใหม่</div><input class="txt" type="date" min="${dateInputMin()}" max="${dateInputMax()}" value="${esc(CH.checkout)}" onchange="CH.checkout=this.value"/>`;
   } else if(kind==='ขอย้ายที่พัก'){
     body=`<div class="label">เหตุผล</div><textarea class="txt" placeholder="เช่น ห้องมีกลิ่น / แอร์เสีย" oninput="CH.note=this.value">${esc(CH.note||'')}</textarea>`;
   } else {
@@ -1094,7 +1213,7 @@ function renderAdminQueue(){
     const joinBadge=(b.joinRequests&&b.joinRequests.length)?`<span class="pill soon">ขอเข้าร่วม</span>`:'';
     const autoBadge=b.autoApproved?`<span class="pill ok">✓ อัตโนมัติ</span>`:'';
     const d=b.derived||{};
-    return `<div class="job" onclick="renderAdminDetail('${b.id}')">
+    return `<div class="job" role="button" tabindex="0" onclick="renderAdminDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAdminDetail('${b.id}')}">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
@@ -1102,20 +1221,28 @@ function renderAdminQueue(){
   }).join("");
   const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ'||b.status==='อนุมัติพื้นที่แล้ว').length;
   const flagged=BOOKINGS.filter(b=>b.change).length;
+  const adminNav = `<div class="adminnav">
+    <div class="grp"><div class="grp-label">ต้องทำตอนนี้</div><div class="chips">
+      ${navChip('🔥 ต้องรีบดูตอนนี้','renderUrgentNow()','urgent')}
+      ${navChip('เตียงว่าง','renderSpareBeds()')}
+      ${navChip('เข้าพักอยู่','renderCheckedIn()')}
+      ${navChip('มัดจำ','renderDepositClaims()')}
+    </div></div>
+    <div class="grp"><div class="grp-label">ข้อมูล</div><div class="chips">
+      ${navChip('นำเข้าแผนงาน','renderScheduleImport()')}
+      ${navChip('นำเข้าสาขา','renderBranchImport()')}
+      ${navChip('แผนงานที่ยังไม่จอง','renderPendingSchedule()')}
+      ${navChip('ผู้ตรวจอนุมัติพื้นที่','renderAreaAssignments()')}
+      ${navChip('จัดการพนักงาน','renderEmployeeRoster()')}
+    </div></div>
+    <div class="grp"><div class="grp-label">รายงาน</div><div class="chips">
+      ${navChip('ภาพรวมทุกแผนงาน','renderScheduleFlow()')}
+      ${navChip('เวลาดำเนินการเฉลี่ย','renderCycleTime()')}
+    </div></div>
+   </div>`;
   $("#app").innerHTML=`<div class="screen"><div class="appbar">
-    <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;color:var(--danger);font-weight:700" onclick="renderUrgentNow()">🔥 ต้องรีบดูตอนนี้</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderSpareBeds()">เตียงว่าง</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCheckedIn()">เข้าพักอยู่</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderDepositClaims()">มัดจำ</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleImport()">นำเข้าแผนงาน</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderBranchImport()">นำเข้าสาขา</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderPendingSchedule()">แผนงานที่ยังไม่จอง</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderAreaAssignments()">ผู้ตรวจอนุมัติพื้นที่</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderScheduleFlow()">ภาพรวมทุกแผนงาน</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderCycleTime()">เวลาดำเนินการเฉลี่ย</span>
-    <span class="sub" style="cursor:pointer;text-decoration:underline;margin-left:10px" onclick="renderEmployeeRoster()">จัดการพนักงาน</span></div>
-   <div class="body">
+    <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div></div>
+   <div class="body">${adminNav}
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
      <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
      <div><div class="val" style="color:var(--danger)">${flagged}</div><div class="label" style="margin:0">มีเรื่องแจ้ง</div></div>
@@ -1134,7 +1261,17 @@ async function adminAction(bookingId, action, extra, okMsg, after){
   }catch(e){ toast(e.message); }
 }
 function chooseHotel(id,choiceId){ adminAction(id,'choose_hotel',{ choice_id:choiceId },null); }
-function areaApprove(id){ adminAction(id,'area_approve',null,'อนุมัติพื้นที่แล้ว ✓',()=>rerender(renderAreaQueue)); }
+// Two-tap confirm — this used to be one unconfirmed tap while the *less*
+// destructive reject action required a full second screen and a typed
+// reason, exactly backwards. Same pattern as deleteScheduleConfirm().
+function areaApprove(id,btn){
+  if(btn && btn.dataset.confirm!=='1'){
+    btn.dataset.confirm='1';
+    btn.textContent='แน่ใจนะ? กดอีกครั้งเพื่ออนุมัติ';
+    return;
+  }
+  adminAction(id,'area_approve',null,'อนุมัติพื้นที่แล้ว ✓',()=>rerender(renderAreaQueue));
+}
 function markHotelUnavailable(id,choiceId){ adminAction(id,'mark_hotel_unavailable',{ choice_id:choiceId },'บันทึกว่าที่พักนี้จองไม่ได้ — ดูที่พักที่แนะนำเพิ่มด้านล่าง'); }
 function addHotelChoiceForBooking(id,hotelCode){
   const hotelId = hotelIdByCode(hotelCode);
@@ -1454,11 +1591,18 @@ async function renderUrgentNow(){
     const rows=items.map(it=>{
       const info=URGENT_TYPE_INFO[it.type];
       const onClick = it.booking_id ? `renderAdminDetail('${esc(it.booking_id)}')` : '';
-      return `<div class="job" ${onClick?`onclick="${onClick}"`:''}>
+      // not_booked items have no booking yet, so there's nothing to open —
+      // they used to render as a cursor:pointer row with no onclick at all
+      // (looked clickable, did nothing). Give them the one real action that
+      // applies: nudge the team, same button used on "แผนงานที่ยังไม่จอง".
+      const action = onClick
+        ? `<div class="chev">›</div>`
+        : (it.schedule_id ? `<button class="btn ghost" style="width:auto;padding:8px 14px;margin:0" onclick="event.stopPropagation();remindSchedule('${esc(it.schedule_id)}',this)">เตือนทีม</button>` : '');
+      return `<div class="job${onClick?'':' static'}"${onClick?` role="button" tabindex="0" onclick="${onClick}" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();${onClick}}"`:''}>
         <div class="g"><div class="t">${esc(it.branch_name)}</div>
          <div class="s">${esc(it.team_code)} · ${fmtDate(it.date)}</div>
          <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap"><span class="pill ${info.cls}">${esc(info.label)}</span>${urgentDaysTag(it.days_until)}</div></div>
-        ${onClick?'<div class="chev">›</div>':''}</div>`;
+        ${action}</div>`;
     }).join('');
     $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
       <div style="flex:1"><h1>🔥 ต้องรีบดูตอนนี้</h1><span class="sub">${items.length} รายการ</span></div></div>
@@ -1504,7 +1648,7 @@ function setEmpRosterFilter(v){ EMP_ROSTER_FILTER=v; rerender(drawEmployeeRoster
 function drawEmployeeRoster(){
   const q=EMP_ROSTER_FILTER.trim().toLowerCase();
   const list = EMP_ROSTER.filter(e=>!q || (e.code||'').toLowerCase().includes(q) || (e.name||'').toLowerCase().includes(q) || (e.nickname||'').toLowerCase().includes(q) || (e.team_code||'').toLowerCase().includes(q));
-  const rows = list.map(e=>`<div class="job" onclick="openEmployeeEdit('${esc(e.code)}')">
+  const rows = list.map(e=>`<div class="job" role="button" tabindex="0" onclick="openEmployeeEdit('${esc(e.code)}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();openEmployeeEdit('${esc(e.code)}')}">
     <div class="d" style="background:${e.active?'var(--success-soft)':'var(--danger-soft)'};color:${e.active?'var(--success)':'var(--danger)'}">${e.gender==='F'?'ญ':(e.gender==='M'?'ช':'?')}<small>${esc(e.team_code||'-')}</small></div>
     <div class="g"><div class="t">${esc(e.name)}${e.nickname?' ('+esc(e.nickname)+')':''}</div>
      <div class="s">${esc(e.code)} · ${esc(e.position||'พนักงาน')}${e.line_user_id?' · ผูกไลน์แล้ว':''}${e.active===false?' · ปิดใช้งาน':''}</div></div>
@@ -1655,7 +1799,7 @@ async function deleteSchedule(id,btn){
 /* ================= เตียงว่าง (แอดมินเพิ่มคนเอง) ================= */
 function renderSpareBeds(){
   const spare=BOOKINGS.filter(b=>b.status==='จองสำเร็จ' && (b.derived.empty_beds||0)>0);
-  const rows=spare.map(b=>`<div class="job" onclick="renderSpareBedDetail('${b.id}')">
+  const rows=spare.map(b=>`<div class="job" role="button" tabindex="0" onclick="renderSpareBedDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderSpareBedDetail('${b.id}')}">
     <div class="d" style="background:var(--success-soft);color:var(--success)">${b.derived.empty_beds}<small>ว่าง</small></div>
     <div class="g"><div class="t">${esc(b.branch)}</div>
      <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div></div><div class="chev">›</div></div>`).join("");
@@ -1725,7 +1869,7 @@ async function renderJoinBrowse(){
   drawJoinBrowse();
 }
 function drawJoinBrowse(){
-  const rows = SPARE_LIST.map(b=>`<div class="job" onclick="openJoinRequest('${b.id}')">
+  const rows = SPARE_LIST.map(b=>`<div class="job" role="button" tabindex="0" onclick="openJoinRequest('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();openJoinRequest('${b.id}')}">
     <div class="d" style="background:var(--success-soft);color:var(--success)">${b.empty_beds}<small>ว่าง</small></div>
     <div class="g"><div class="t">${esc(b.branches?b.branches.name:b.branch_code)}</div><div class="s">${esc(b.team_code)} · ${fmtDate(b.checkin_date)}–${fmtDate(b.checkout_date)}</div></div>
     <div class="chev">›</div></div>`).join("");
@@ -1785,7 +1929,7 @@ function renderCheckedIn(){
     const ci=new Date(b.checkin), co=new Date(b.checkout);
     return ci<=today && today<=co;
   });
-  const rows = active.map(b=>`<div class="job" onclick="renderAdminDetail('${b.id}')">
+  const rows = active.map(b=>`<div class="job" role="button" tabindex="0" onclick="renderAdminDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAdminDetail('${b.id}')}">
     <div class="d" style="background:var(--brand-soft);color:var(--brand)">${b.derived.people||0}<small>คน</small></div>
     <div class="g"><div class="t">${esc(b.branch)}</div>
      <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div></div><div class="chev">›</div></div>`).join("");
@@ -1846,9 +1990,9 @@ function renderAdminDetail(id){
   }).join("");
   const guestRows=guests.map(g=>`<div class="guestcard">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="gt ${g.g}">${g.g==='f'?'ญ':'ช'}</span><strong style="font-size:12px">${esc(g.team||'')}</strong></div>
-    <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.code||'')}')">คัดลอก</span></div>
-    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')} ${guestHomeDistanceTag(g,b)}</span><span class="cp" onclick="copyTxt('${esc(g.name||'')}')">คัดลอก</span></div>
-    <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span><span class="cp" onclick="copyTxt('${esc(g.phone||'')}')">คัดลอก</span></div>
+    <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span>${copyChip(`'${esc(g.code||'')}'`)}</div>
+    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')} ${guestHomeDistanceTag(g,b)}</span>${copyChip(`'${esc(g.name||'')}'`)}</div>
+    <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span>${copyChip(`'${esc(g.phone||'')}'`)}</div>
    </div>`).join("");
   const hotelRadios=hotelsWithDist.map(h=>{
     const provTag = h.prov && h.prov!==b.prov ? ` · จ.${esc(h.prov)}` : '';
@@ -1919,7 +2063,7 @@ function renderAdminDetail(id){
      <div class="copyrow"><span class="k">ทีม</span><span class="v">${esc(b.team)}</span></div>
      <div class="copyrow"><span class="k">สาขา</span><span class="v">${esc(b.branch)}${b.prov?' · จ.'+esc(b.prov):''}</span></div>
      <div class="copyrow"><span class="k">เช็คอิน–เอาท์</span><span class="v">${fmtDate(b.checkin)} – ${fmtDate(b.checkout)} (${nights} คืน)</span>
-      <span class="cp" onclick="copyTxt('${esc(b.checkin)} - ${esc(b.checkout)}')">คัดลอก</span></div>
+      ${copyChip(`'${esc(b.checkin)} - ${esc(b.checkout)}'`)}</div>
      <div class="copyrow"><span class="k">ห้อง</span><span class="v">${rooms.length} ห้อง</span></div>
      <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
      ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
@@ -1929,15 +2073,15 @@ function renderAdminDetail(id){
      <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
      <div class="roomgrid">${rc}</div></div>
     <div class="card"><div class="label">รหัส · ชื่อ · เบอร์ (ก็อปไปจองบนชูวับ)</div>
-     ${guestRows}
-     <div class="addnew" onclick="copyTxt(${JSON.stringify(copyAll)})">คัดลอกรายชื่อทั้งหมด</div></div>
+     <div class="copyall" role="button" tabindex="0" onclick="copyTxt(${JSON.stringify(copyAll)})" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();copyTxt(${JSON.stringify(copyAll)})}">คัดลอกรายชื่อทั้งหมด</div>
+     ${guestRows}</div>
     ${mapCard}
     <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้ — เลือกอันที่จองได้จริง</div>${hotelRadios}
      ${chosen?`<div class="hint" style="margin-top:8px">ประมาณการรวม ~${cost.toLocaleString()}฿ (${nights} คืน × ${rooms.length} ห้อง)</div>`:'<div class="hint">ยังไม่ได้เลือกที่พักที่จะจอง</div>'}</div>
     ${altCard}
     ${voucherShown}
     ${statusLogHtml(b)}
-    ${actions}</div></div>`;
+    <div class="stickyactions">${actions}</div></div></div>`;
   renderAdminMap(b, suggestions);
 }
 
@@ -1951,7 +2095,7 @@ function renderAreaQueue(){
   const sorted=BOOKINGS.slice().sort((a,b)=>(order[a.status]??9)-(order[b.status]??9));
   const rows=sorted.map(b=>{
     const d=b.derived||{};
-    return `<div class="job" onclick="renderAreaDetail('${b.id}')">
+    return `<div class="job" role="button" tabindex="0" onclick="renderAreaDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAreaDetail('${b.id}')}">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
@@ -2016,7 +2160,7 @@ function renderAreaDetail(id){
   const ruleBanner = (b.ruleViolations&&b.ruleViolations.length) ? `<div class="warn a">⚠️ ${b.ruleViolations.map(esc).join(' · ')}</div>` : '';
   const areaBanner = b.areaApprovedAt ? `<div class="warn g">✓ อนุมัติพื้นที่แล้ว โดย ${esc(b.areaApprovedBy||'')}</div>` : '';
   const actions = b.status==='ส่งคำขอ'
-    ? `<button class="btn" onclick="areaApprove('${b.id}')">อนุมัติ — ส่งต่อให้แอดมินจอง</button>
+    ? `<button class="btn" onclick="areaApprove('${b.id}',this)">อนุมัติ — ส่งต่อให้แอดมินจอง</button>
        <button class="btn danger" style="margin-top:8px" onclick="areaReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
     : '';
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAreaQueue()">‹</span>
@@ -2039,7 +2183,7 @@ function renderAreaDetail(id){
     ${mapCard}
     <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้</div>${hotelRows}</div>
     ${statusLogHtml(b)}
-    ${actions}</div></div>`;
+    <div class="stickyactions">${actions}</div></div></div>`;
   renderAdminMap(b, []);
 }
 
@@ -2158,7 +2302,7 @@ function drawDepositClaims(){
   const STATUS_PILL = { 'รอตรวจ':'wait', 'อนุมัติแต่ยังไม่คืน':'soon', 'คืนแล้ว':'ok' };
   const rows = DEPCLAIMS.map(c=>{
     const staff = STAFF[c.claimed_by_employee];
-    return `<div class="job" onclick="renderDepositClaimDetail('${c.id}')">
+    return `<div class="job" role="button" tabindex="0" onclick="renderDepositClaimDetail('${c.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderDepositClaimDetail('${c.id}')}">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${Number(c.amount||0).toLocaleString()}<small>฿</small></div>
      <div class="g"><div class="t">${esc(staff?staff.name:c.claimed_by_employee)}</div>
       <div class="s">${esc(c.booking_id)} · ${esc(c.bank_name||'')}</div>
@@ -2178,7 +2322,7 @@ function renderDepositClaimDetail(id){
      <div class="copyrow"><span class="k">การจอง</span><span class="v">${esc(c.booking_id)}</span></div>
      <div class="copyrow"><span class="k">จำนวนเงิน</span><span class="v">${Number(c.amount||0).toLocaleString()}฿</span></div>
      <div class="copyrow"><span class="k">ธนาคาร</span><span class="v">${esc(c.bank_name||'—')}</span></div>
-     <div class="copyrow"><span class="k">เลขบัญชี</span><span class="v">${esc(c.bank_account_no||'—')}</span><span class="cp" onclick="copyTxt('${esc(c.bank_account_no||'')}')">คัดลอก</span></div>
+     <div class="copyrow"><span class="k">เลขบัญชี</span><span class="v">${esc(c.bank_account_no||'—')}</span>${copyChip(`'${esc(c.bank_account_no||'')}'`)}</div>
      <div class="copyrow"><span class="k">ชื่อบัญชี</span><span class="v">${esc(c.bank_account_name||'—')}</span></div>
      ${c.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(c.note)}</span></div>`:''}
      <div class="copyrow"><span class="k">สถานะ</span><span class="v">${esc(c.status)}</span></div></div>

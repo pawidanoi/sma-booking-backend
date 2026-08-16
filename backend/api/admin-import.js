@@ -195,7 +195,7 @@ async function urgentNow(res) {
     const target = addDays(s.date_start, -(s.advance_days || 0));
     const d = daysUntil(target);
     if (d > 5) return;
-    items.push({ type: 'not_booked', team_code: s.team_code, branch_name: s.branches?.name || s.branch_code, date: s.date_start, days_until: d });
+    items.push({ type: 'not_booked', schedule_id: s.id, team_code: s.team_code, branch_name: s.branches?.name || s.branch_code, date: s.date_start, days_until: d });
   });
 
   const { data: bookings, error: bErr } = await supabase
