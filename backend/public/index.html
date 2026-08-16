@@ -316,11 +316,22 @@ function screenLoading(msg){
 }
 
 /* ---------------- normalise API shapes into what the UI expects ---------------- */
+// mapLink is derived from lat/lng, not read from the stored map_link column —
+// map_link turned out to be nothing but a frozen "?q=lat,lng" snapshot taken
+// once at Choowap-import time (662/667 rows, verified via /api/bootstrap:
+// only 5 differ from that pattern). Correcting a hotel's lat/lng later
+// (hotel_update_coords) never touched map_link, so the "ดูใน Maps" button
+// kept pointing at the old wrong pin even after the coordinate was fixed.
+// Deriving it live from lat/lng means any future coordinate fix is reflected
+// immediately with no separate field to keep in sync. Custom (employee-
+// added) hotels have no registry lat/lng, so they keep using their own
+// pasted custom_map_link (handled separately, not through normHotel).
 function normHotel(h){
+  const lat = h.lat==null?null:Number(h.lat), lng = h.lng==null?null:Number(h.lng);
   return { id:h.id, code:h.code, name:h.name, prov:h.province, near:h.near_area,
-           lat:h.lat==null?null:Number(h.lat), lng:h.lng==null?null:Number(h.lng),
+           lat, lng,
            price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
-           choowap:!!h.on_choowap, mapLink:h.map_link||null };
+           choowap:!!h.on_choowap, mapLink: (lat!=null && lng!=null) ? `https://www.google.com/maps?q=${lat},${lng}` : (h.map_link||null) };
 }
 // Shared everywhere a hotel/map link needs a tap-out button — stops the click
 // from bubbling into whatever selects/toggles the row it sits on.
@@ -397,7 +408,11 @@ function normBooking(b){
     name: c.hotels ? c.hotels.name : c.custom_name,
     price: c.custom_price!=null ? Number(c.custom_price) : (c.hotels && c.hotels.default_price_per_night!=null ? Number(c.hotels.default_price_per_night) : null),
     near: c.hotels ? c.hotels.near_area : null,
-    map: c.hotels ? (c.hotels.map_link || '') : (c.custom_map_link || ''),
+    // Same reason as normHotel()'s mapLink — a registry hotel's stored
+    // map_link is a frozen snapshot from import time, not kept in sync when
+    // its lat/lng gets corrected later. Derive live from lat/lng instead;
+    // custom (no-registry) hotels keep using their own pasted link.
+    map: c.hotels && c.hotels.lat!=null && c.hotels.lng!=null ? `https://www.google.com/maps?q=${Number(c.hotels.lat)},${Number(c.hotels.lng)}` : (c.custom_map_link || ''),
     custom: !c.hotel_id,
     lat: c.hotels && c.hotels.lat!=null ? Number(c.hotels.lat) : null,
     lng: c.hotels && c.hotels.lng!=null ? Number(c.hotels.lng) : null,
