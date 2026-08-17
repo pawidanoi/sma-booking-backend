@@ -197,7 +197,27 @@ let TOAST_TIMER=null;
 // screen before it vanishes. clearTimeout guards a fast second toast from
 // getting cut short by the first one's already-scheduled hide.
 function toast(t){ const e=$("#toast"); if(!e) return; e.textContent=t; e.classList.add("show"); if(TOAST_TIMER) clearTimeout(TOAST_TIMER); TOAST_TIMER=setTimeout(()=>e.classList.remove("show"), String(t).length>30?5000:2200); }
-function rerender(fn){ const b=document.querySelector('.body'); const y=b?b.scrollTop:0; fn(); const nb=document.querySelector('.body'); if(nb)nb.scrollTop=y; if(fn===renderForm) saveFormDraft(); }
+// Every rerender() replaces the whole #app innerHTML, so an <input> the user
+// is actively typing in gets swapped for a brand-new DOM node — losing focus
+// and (on mobile) dismissing the keyboard, which reads as the page bouncing/
+// reloading mid-keystroke. Only affects inputs that trigger a rerender on
+// every keystroke (live-filtered lists like the hotel search box); most
+// fields just mutate S without rerendering and never hit this. Give such an
+// input a stable id and this restores focus + caret position across the
+// swap, same idea as the scroll-position restore already below.
+function rerender(fn){
+  const b=document.querySelector('.body'); const y=b?b.scrollTop:0;
+  const ae=document.activeElement, afId=(ae && ae.id) ? ae.id : null;
+  const selStart=(afId && ae.selectionStart!=null) ? ae.selectionStart : null;
+  const selEnd=(afId && ae.selectionEnd!=null) ? ae.selectionEnd : null;
+  fn();
+  const nb=document.querySelector('.body'); if(nb)nb.scrollTop=y;
+  if(fn===renderForm) saveFormDraft();
+  if(afId){
+    const el=document.getElementById(afId);
+    if(el){ el.focus(); if(selStart!=null && el.setSelectionRange){ try{ el.setSelectionRange(selStart, selEnd); }catch(e){} } }
+  }
+}
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function nickOf(p){ return String(p&&(p.nickname||p.nick)||'').replace(/\s*[ชญ]\s*$/,'').trim() || (p&&p.name) || ''; }
 function isSpecialRole(pos){ return SPECIAL_POS.includes(pos); }
@@ -1017,7 +1037,7 @@ function renderForm(){
     ${effProv?`<div class="card"><div class="label">เลือกที่พัก — จ.${esc(effProv)}${j.dist?` (อ.${esc(j.dist)}ก่อน)`:''} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
      ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}
      <div class="label" style="margin-top:14px">ค้นหาที่พักอื่น (ทุกจังหวัด — เผื่อมีที่ใกล้กว่าอยู่จังหวัดข้างเคียง)</div>
-     <input class="txt" placeholder="พิมพ์ชื่อที่พัก อำเภอ หรือจังหวัด..." value="${esc(S.hotelSearch||'')}" oninput="setHotelSearch(this.value)"/>
+     <input id="hotelSearchInput" class="txt" placeholder="พิมพ์ชื่อที่พัก อำเภอ หรือจังหวัด..." value="${esc(S.hotelSearch||'')}" oninput="setHotelSearch(this.value)"/>
      ${searchHtml}</div>`:''}
     <div class="card"><div class="label">จำนวนผู้เข้าพัก (แยกเพศก่อน)</div>
      <div style="display:flex;gap:22px;align-items:center;margin-top:4px">
