@@ -326,12 +326,19 @@ function screenLoading(msg){
 // immediately with no separate field to keep in sync. Custom (employee-
 // added) hotels have no registry lat/lng, so they keep using their own
 // pasted custom_map_link (handled separately, not through normHotel).
+// Embedding the name in the q= parameter (Google's "q=lat,lng(label)" form)
+// makes the pin show that hotel's own name when clicked, instead of an
+// unlabeled dot — a plain "?q=lat,lng" link looked identical for every
+// hotel and gave no way to visually confirm it was the right place.
+function pinLink(lat, lng, name){
+  return `https://www.google.com/maps?q=${lat},${lng}(${encodeURIComponent(name||'')})`;
+}
 function normHotel(h){
   const lat = h.lat==null?null:Number(h.lat), lng = h.lng==null?null:Number(h.lng);
   return { id:h.id, code:h.code, name:h.name, prov:h.province, near:h.near_area,
            lat, lng,
            price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
-           choowap:!!h.on_choowap, mapLink: (lat!=null && lng!=null) ? `https://www.google.com/maps?q=${lat},${lng}` : (h.map_link||null) };
+           choowap:!!h.on_choowap, mapLink: (lat!=null && lng!=null) ? pinLink(lat, lng, h.name) : (h.map_link||null) };
 }
 // Shared everywhere a hotel/map link needs a tap-out button — stops the click
 // from bubbling into whatever selects/toggles the row it sits on.
@@ -412,7 +419,7 @@ function normBooking(b){
     // map_link is a frozen snapshot from import time, not kept in sync when
     // its lat/lng gets corrected later. Derive live from lat/lng instead;
     // custom (no-registry) hotels keep using their own pasted link.
-    map: c.hotels && c.hotels.lat!=null && c.hotels.lng!=null ? `https://www.google.com/maps?q=${Number(c.hotels.lat)},${Number(c.hotels.lng)}` : (c.custom_map_link || ''),
+    map: c.hotels && c.hotels.lat!=null && c.hotels.lng!=null ? pinLink(Number(c.hotels.lat), Number(c.hotels.lng), c.hotels.name) : (c.custom_map_link || ''),
     custom: !c.hotel_id,
     lat: c.hotels && c.hotels.lat!=null ? Number(c.hotels.lat) : null,
     lng: c.hotels && c.hotels.lng!=null ? Number(c.hotels.lng) : null,

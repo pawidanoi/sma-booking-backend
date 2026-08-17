@@ -710,7 +710,7 @@ async function hotelImport(res, body) {
       address: row.address || null,
       lat: Number.isFinite(lat) ? lat : null,
       lng: Number.isFinite(lng) ? lng : null,
-      map_link: Number.isFinite(lat) && Number.isFinite(lng) ? `https://www.google.com/maps?q=${lat},${lng}` : null,
+      map_link: Number.isFinite(lat) && Number.isFinite(lng) ? `https://www.google.com/maps?q=${lat},${lng}(${encodeURIComponent(name)})` : null,
       default_price_per_night: price,
       review_score: Number.isFinite(reviewScore) ? reviewScore : null,
       review_url: row.review_url || null,
@@ -752,14 +752,17 @@ async function hotelUpdateCoords(res, body) {
   const lat = Number(body.lat), lng = Number(body.lng);
   if (!code) return fail(res, 400, 'ไม่ได้ระบุรหัสที่พัก');
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return fail(res, 400, 'พิกัดไม่ถูกต้อง');
+  const { data: existing } = await supabase.from('hotels').select('name').eq('code', code).maybeSingle();
+  if (!existing) return fail(res, 404, 'ไม่พบที่พักรหัสนี้');
   // map_link on Choowap-imported rows is nothing but a frozen "?q=lat,lng"
   // snapshot taken at import time — leaving it untouched here silently
   // re-breaks the "ดูใน Maps" button for every hotel this endpoint fixes,
   // since the frontend falls back to it whenever lat/lng aren't both set.
-  const mapLink = `https://www.google.com/maps?q=${lat},${lng}`;
+  // The name is embedded in the query so the pin shows this hotel's own
+  // label when clicked, not an unlabeled dot indistinguishable from any other.
+  const mapLink = `https://www.google.com/maps?q=${lat},${lng}(${encodeURIComponent(existing.name)})`;
   const { data, error } = await supabase.from('hotels').update({ lat, lng, map_link: mapLink }).eq('code', code).select('id, name').maybeSingle();
   if (error) return fail(res, 500, error.message);
-  if (!data) return fail(res, 404, 'ไม่พบที่พักรหัสนี้');
   return json(res, 200, { ok: true, name: data.name });
 }
 
