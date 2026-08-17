@@ -324,6 +324,19 @@ function screenLoading(msg){
 // name+district+province search link serves that even when we have no
 // coordinate at all, and unlike a bare coordinate pin it fails obviously
 // (no result / wrong result) instead of silently pointing at a wrong spot.
+// Branches store the district's full official name ("เมืองนนทบุรี"), but the
+// Choowap-imported hotel registry mostly just has "เมือง" (sometimes with a
+// stray trailing "." from data entry) for the exact same provincial-capital
+// district — a straight string compare would silently treat every "เมือง"
+// hotel as "a different district" from its own province's capital branch.
+// Every Thai province's capital district is "เมือง" + the province name (or
+// bare "เมือง"), so collapsing that prefix to one canonical key fixes it
+// for all provinces at once, not just the one this was caught on.
+function normDistrict(d){
+  if(!d) return '';
+  const s = String(d).trim().replace(/\.+$/,'');
+  return s.indexOf('เมือง')===0 ? 'เมือง' : s;
+}
 function reviewLink(name, dist, prov){
   const q = dist ? `${name} อ.${dist} จ.${prov}` : `${name} จ.${prov}`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
@@ -870,10 +883,11 @@ function renderForm(){
   // Same province is always the default list, same district as the branch
   // sorted to the top; the free-text search further down covers the case
   // where a hotel in a neighbouring province is actually the better pick.
+  const jDistKey = normDistrict(j.dist);
   const list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
     .sort((a,b) => {
-      const aSame = (j.dist && a.dist===j.dist) ? 0 : 1;
-      const bSame = (j.dist && b.dist===j.dist) ? 0 : 1;
+      const aSame = (jDistKey && normDistrict(a.dist)===jDistKey) ? 0 : 1;
+      const bSame = (jDistKey && normDistrict(b.dist)===jDistKey) ? 0 : 1;
       if (aSame !== bSame) return aSame - bSame;
       return (a.price==null?9999:a.price)-(b.price==null?9999:b.price);
     });
@@ -891,8 +905,8 @@ function renderForm(){
   // Same split pattern as the old near/far grouping, now keyed on district
   // match instead of distance — same-district options show immediately, the
   // rest of the province is one tap away via <details>.
-  const sameDist = j.dist ? list.filter(h => h.dist===j.dist) : [];
-  const otherDist = j.dist ? list.filter(h => h.dist!==j.dist) : list;
+  const sameDist = jDistKey ? list.filter(h => normDistrict(h.dist)===jDistKey) : [];
+  const otherDist = jDistKey ? list.filter(h => normDistrict(h.dist)!==jDistKey) : list;
   const sameHtml = sameDist.map(renderHotelRow).join("");
   const otherHtml = otherDist.length ? (sameDist.length ? `<details style="margin-top:4px">
       <summary class="disclosure">ที่พักอำเภออื่นในจังหวัดเดียวกัน (${otherDist.length} แห่ง) — แตะเพื่อดู</summary>
