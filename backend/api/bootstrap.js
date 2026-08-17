@@ -43,7 +43,7 @@ module.exports = async function handler(req, res) {
     supabase.from('branches').select('code, name, district, province, lat, lng, needs_review').order('name'),
     supabase
       .from('hotels')
-      .select('id, code, name, province, near_area, lat, lng, map_link, default_price_per_night, on_choowap, is_custom')
+      .select('id, code, name, province, district, near_area, lat, lng, map_link, default_price_per_night, on_choowap, is_custom')
       .eq('active', true)
       .order('name'),
     supabase.from('teams').select('code, name').order('code'),

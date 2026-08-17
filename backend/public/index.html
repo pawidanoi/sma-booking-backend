@@ -316,34 +316,29 @@ function screenLoading(msg){
 }
 
 /* ---------------- normalise API shapes into what the UI expects ---------------- */
-// mapLink is derived from lat/lng, not read from the stored map_link column —
-// map_link turned out to be nothing but a frozen "?q=lat,lng" snapshot taken
-// once at Choowap-import time (662/667 rows, verified via /api/bootstrap:
-// only 5 differ from that pattern). Correcting a hotel's lat/lng later
-// (hotel_update_coords) never touched map_link, so the "ดูใน Maps" button
-// kept pointing at the old wrong pin even after the coordinate was fixed.
-// Deriving it live from lat/lng means any future coordinate fix is reflected
-// immediately with no separate field to keep in sync. Custom (employee-
-// added) hotels have no registry lat/lng, so they keep using their own
-// pasted custom_map_link (handled separately, not through normHotel).
-// Embedding the name in the q= parameter (Google's "q=lat,lng(label)" form)
-// makes the pin show that hotel's own name when clicked, instead of an
-// unlabeled dot — a plain "?q=lat,lng" link looked identical for every
-// hotel and gave no way to visually confirm it was the right place.
-function pinLink(lat, lng, name){
-  return `https://www.google.com/maps?q=${lat},${lng}(${encodeURIComponent(name||'')})`;
+// Registry hotel coordinates turned out too unreliable to sort/filter by (a
+// province-wide manual audit still found wrong pins after multiple fix
+// passes), so distance-based hotel picking was dropped in favor of
+// province+district matching (see renderForm). The Maps link people actually
+// want here is "confirm this is the right place and read its reviews" — a
+// name+district+province search link serves that even when we have no
+// coordinate at all, and unlike a bare coordinate pin it fails obviously
+// (no result / wrong result) instead of silently pointing at a wrong spot.
+function reviewLink(name, dist, prov){
+  const q = dist ? `${name} อ.${dist} จ.${prov}` : `${name} จ.${prov}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 function normHotel(h){
   const lat = h.lat==null?null:Number(h.lat), lng = h.lng==null?null:Number(h.lng);
-  return { id:h.id, code:h.code, name:h.name, prov:h.province, near:h.near_area,
+  return { id:h.id, code:h.code, name:h.name, prov:h.province, dist:h.district||null, near:h.near_area,
            lat, lng,
            price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
-           choowap:!!h.on_choowap, mapLink: (lat!=null && lng!=null) ? pinLink(lat, lng, h.name) : (h.map_link||null) };
+           choowap:!!h.on_choowap, mapLink: reviewLink(h.name, h.district, h.province) };
 }
 // Shared everywhere a hotel/map link needs a tap-out button — stops the click
 // from bubbling into whatever selects/toggles the row it sits on.
 function mapLinkBtn(url){
-  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="maplink">📍 ดูใน Maps</a>` : '';
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="maplink">⭐ ดูรีวิว</a>` : '';
 }
 // Home<->branch distance shown right after a guest's name in AREA/admin review
 // screens (สรุป-requirement's original AREA-approval spec asked for this, never
@@ -415,11 +410,11 @@ function normBooking(b){
     name: c.hotels ? c.hotels.name : c.custom_name,
     price: c.custom_price!=null ? Number(c.custom_price) : (c.hotels && c.hotels.default_price_per_night!=null ? Number(c.hotels.default_price_per_night) : null),
     near: c.hotels ? c.hotels.near_area : null,
-    // Same reason as normHotel()'s mapLink — a registry hotel's stored
-    // map_link is a frozen snapshot from import time, not kept in sync when
-    // its lat/lng gets corrected later. Derive live from lat/lng instead;
-    // custom (no-registry) hotels keep using their own pasted link.
-    map: c.hotels && c.hotels.lat!=null && c.hotels.lng!=null ? pinLink(Number(c.hotels.lat), Number(c.hotels.lng), c.hotels.name) : (c.custom_map_link || ''),
+    // Same reason as normHotel()'s mapLink — a name+district+province search
+    // link, not a coordinate pin (registry coordinates aren't trustworthy
+    // enough to point a bare pin at). Custom (no-registry) hotels keep using
+    // their own pasted link.
+    map: c.hotels ? reviewLink(c.hotels.name, c.hotels.district, c.hotels.province) : (c.custom_map_link || ''),
     custom: !c.hotel_id,
     lat: c.hotels && c.hotels.lat!=null ? Number(c.hotels.lat) : null,
     lng: c.hotels && c.hotels.lng!=null ? Number(c.hotels.lng) : null,
@@ -436,6 +431,7 @@ function normBooking(b){
     id:b.id, guestList:guests, team:b.team_code, branchCode:b.branch_code,
     branch: b.branches ? b.branches.name : b.branch_code,
     prov: b.branches ? b.branches.province : null,
+    dist: b.branches ? b.branches.district : null,
     blat: b.branches && b.branches.lat!=null ? Number(b.branches.lat) : null,
     blng: b.branches && b.branches.lng!=null ? Number(b.branches.lng) : null,
     jobId:b.work_schedule_id, checkin:b.checkin_date, checkout:b.checkout_date,
@@ -458,7 +454,7 @@ function jobsForMyTeam(){
   return SCHEDULE.filter(s=>s.team_code===ME.team_code).map(s=>{
     const br = BRANCH_BY_CODE[s.branch_code] || {};
     return { id:s.id, team:s.team_code, branchCode:s.branch_code, branch:br.name||s.branch_code,
-             prov:br.province||null,
+             prov:br.province||null, dist:br.district||null,
              blat: br.lat!=null?Number(br.lat):null, blng: br.lng!=null?Number(br.lng):null,
              start:s.date_start, end:s.date_end, adv:s.advance_days||0 };
   });
@@ -676,15 +672,15 @@ function openForm(scheduleId){
   if(!j){ toast('ไม่พบงานนี้'); return; }
   const draft=loadFormDraft(scheduleId);
   if(draft){ S=draft; toast('กู้คืนแบบฟอร์มที่กรอกค้างไว้ให้แล้ว'); renderForm(); return; }
-  S={ editId:null, job:j, manualProv:null, checkin:j.start, checkout:j.end,
+  S={ editId:null, job:j, manualProv:null, hotelSearch:'', checkin:j.start, checkout:j.end,
       hotelPicks:[], addingHotel:false, newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", busy:false };
   renderForm();
 }
 function openAdhocForm(){
   const draft=loadFormDraft(null);
   if(draft){ S=draft; toast('กู้คืนแบบฟอร์มที่กรอกค้างไว้ให้แล้ว'); renderForm(); return; }
-  S={ editId:null, job:{ id:null, branchCode:'', branch:'', prov:null, start:'', end:'', adv:0, blat:null, blng:null, adhoc:true },
-      manualProv:null, checkin:'', checkout:'', hotelPicks:[], addingHotel:false,
+  S={ editId:null, job:{ id:null, branchCode:'', branch:'', prov:null, dist:null, start:'', end:'', adv:0, blat:null, blng:null, adhoc:true },
+      manualProv:null, hotelSearch:'', checkin:'', checkout:'', hotelPicks:[], addingHotel:false,
       newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", missionType:'', missionNote:'', busy:false };
   renderForm();
 }
@@ -700,7 +696,7 @@ function openFormEdit(id){
   stored.filter(g=>g.g==='f').forEach((g,i)=>slots.push({ g:'f', idx:i, team:g.team||ME.team_code, code:g.code||'', name:g.name, phone:g.phone||'', manual:!g.code }));
   stored.filter(g=>g.g==='m').forEach((g,i)=>slots.push({ g:'m', idx:i, team:g.team||ME.team_code, code:g.code||'', name:g.name, phone:g.phone||'', manual:!g.code }));
   S={ editId:b.id,
-      job:{ id:b.jobId, branchCode:b.branchCode, branch:b.branch, prov:b.prov,
+      job:{ id:b.jobId, branchCode:b.branchCode, branch:b.branch, prov:b.prov, dist:b.dist,
             start:'', end:'', adv:0, blat:b.blat, blng:b.blng, adhoc:!b.jobId },
       manualProv:b.prov, checkin:b.checkin, checkout:b.checkout,
       // Re-point each saved choice back at the live registry entry so the picker highlights it.
@@ -747,11 +743,11 @@ function copyFromLastBooking(){
 function setManualProv(v){ S.manualProv=v; rerender(renderForm); }
 function setAdhocBranch(code){
   const b=BRANCH_BY_CODE[code]; if(!b) return;
-  S.job.branchCode=b.code; S.job.branch=b.name; S.job.prov=b.province;
+  S.job.branchCode=b.code; S.job.branch=b.name; S.job.prov=b.province; S.job.dist=b.district||null;
   S.job.blat=b.lat!=null?Number(b.lat):null; S.job.blng=b.lng!=null?Number(b.lng):null;
   rerender(renderForm);
 }
-function resetAdhocBranch(){ S.job.branchCode=''; S.job.branch=''; S.job.prov=null; S.job.blat=null; S.job.blng=null; rerender(renderForm); }
+function resetAdhocBranch(){ S.job.branchCode=''; S.job.branch=''; S.job.prov=null; S.job.dist=null; S.job.blat=null; S.job.blng=null; rerender(renderForm); }
 function rebuildSlots(){
   const s=[];
   for(let i=0;i<S.f;i++) s.push(S.slots.find(x=>x.g==='f'&&x.idx===i) || {g:'f',idx:i,team:ME.team_code,code:'',name:'',phone:'',manual:false});
@@ -769,6 +765,7 @@ function toggleHotel(code){
 }
 function removeHotelPick(code){ const i=S.hotelPicks.findIndex(x=>x.code===code); if(i>=0)S.hotelPicks.splice(i,1); rerender(renderForm); }
 function toggleAddHotelForm(){ S.addingHotel=!S.addingHotel; S.newHotelDraft={n:'',map:'',p:''}; rerender(renderForm); }
+function setHotelSearch(v){ S.hotelSearch=v; rerender(renderForm); }
 function setNewHotelField(k,v){ if(!S.newHotelDraft)S.newHotelDraft={n:'',map:'',p:''}; S.newHotelDraft[k]=v; }
 function confirmNewHotel(){
   const d=S.newHotelDraft||{};
@@ -867,50 +864,56 @@ function renderForm(){
       <input class="txt" placeholder="ระบุสั้นๆ" value="${esc(S.missionNote||'')}" oninput="S.missionNote=this.value"/>`:''}
     </div>` : '';
 
-  // Same province is always eligible (no distance cap); a hotel in a different
-  // province is only eligible within NEARBY_KM of the branch — needs the branch's
-  // own coordinates to check, so falls back to the old province-only list when
-  // the branch has none.
-  const NEARBY_KM = 30;
-  let list;
-  if (hasBranchCoords(j)) {
-    list = HOTELS
-      .map(h => Object.assign({}, h, { _km: roadKm(haversine(j.blat, j.blng, h.lat, h.lng)) }))
-      .filter(h => h.prov === effProv || (h._km != null && h._km <= NEARBY_KM))
-      .sort((a,b) => (a._km==null?9999:a._km) - (b._km==null?9999:b._km));
-  } else {
-    list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
-      .sort((a,b)=>(a.price==null?9999:a.price)-(b.price==null?9999:b.price));
-  }
+  // Distance-based sort/filter was dropped — registry hotel coordinates proved
+  // too unreliable to trust even after repeated fix passes, and a bad
+  // coordinate is invisible to whoever's picking, unlike a bad name/district.
+  // Same province is always the default list, same district as the branch
+  // sorted to the top; the free-text search further down covers the case
+  // where a hotel in a neighbouring province is actually the better pick.
+  const list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
+    .sort((a,b) => {
+      const aSame = (j.dist && a.dist===j.dist) ? 0 : 1;
+      const bSame = (j.dist && b.dist===j.dist) ? 0 : 1;
+      if (aSame !== bSame) return aSame - bSame;
+      return (a.price==null?9999:a.price)-(b.price==null?9999:b.price);
+    });
   const renderHotelRow = (h) => {
     const sel=S.hotelPicks.some(x=>x.code===h.code);
-    const dist = h._km!=null ? `ห่าง ~${h._km.toFixed(1)} กม.` : (h.near?('ใกล้ '+esc(h.near)):'');
+    const distTag = h.dist ? `อ.${esc(h.dist)}` : (h.near?('ใกล้ '+esc(h.near)):'');
     const provTag = h.prov && h.prov!==effProv ? ` · จ.${esc(h.prov)}` : '';
     return `<div class="hotel ${sel?'sel':''}" role="checkbox" aria-checked="${sel}" tabindex="0"
         onclick="toggleHotel('${esc(h.code)}')"
         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleHotel('${esc(h.code)}')}">
       <div class="chk">${sel?'✓':''}</div>
-      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${distTag}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
       <div class="p">${h.price!=null?h.price+'฿<br><small style="font-weight:500;opacity:.7">/ห้อง/คืน</small>':'—'}</div></div>`;
   };
-  // Grouped by distance so a 30+ item list isn't one undifferentiated scroll —
-  // near options (the ones that matter most) show immediately, farther ones
-  // are one tap away via a native <details> (free keyboard + screen-reader
-  // support, no extra JS). Only meaningful when we actually have distances;
-  // the province-only fallback list stays flat since it's price-sorted, not
-  // distance-sorted, and grouping by an absent number would be arbitrary.
-  let hotelHtml;
-  if (hasBranchCoords(j)) {
-    const near = list.filter(h => h._km==null || h._km<=10);
-    const far = list.filter(h => h._km!=null && h._km>10);
-    const nearHtml = near.map(renderHotelRow).join("");
-    const farHtml = far.length ? `<details ${near.length?'':'open'} style="margin-top:4px">
-        <summary class="disclosure">ที่พักไกลกว่า 10 กม. (${far.length} แห่ง) — แตะเพื่อดู</summary>
-        ${far.map(renderHotelRow).join("")}
-      </details>` : '';
-    hotelHtml = nearHtml + farHtml;
-  } else {
-    hotelHtml = list.map(renderHotelRow).join("");
+  // Same split pattern as the old near/far grouping, now keyed on district
+  // match instead of distance — same-district options show immediately, the
+  // rest of the province is one tap away via <details>.
+  const sameDist = j.dist ? list.filter(h => h.dist===j.dist) : [];
+  const otherDist = j.dist ? list.filter(h => h.dist!==j.dist) : list;
+  const sameHtml = sameDist.map(renderHotelRow).join("");
+  const otherHtml = otherDist.length ? (sameDist.length ? `<details style="margin-top:4px">
+      <summary class="disclosure">ที่พักอำเภออื่นในจังหวัดเดียวกัน (${otherDist.length} แห่ง) — แตะเพื่อดู</summary>
+      ${otherDist.map(renderHotelRow).join("")}
+    </details>` : otherDist.map(renderHotelRow).join("")) : '';
+  const hotelHtml = sameHtml + otherHtml;
+
+  // Free-text search across every registry hotel regardless of province —
+  // the only way to surface a neighbouring-province hotel that's actually
+  // the better pick, now that picking isn't distance-computed.
+  const searchQ = (S.hotelSearch||'').trim();
+  let searchHtml = '';
+  if (searchQ) {
+    const ql = searchQ.toLowerCase();
+    const results = HOTELS.filter(h =>
+      (h.name||'').toLowerCase().includes(ql) ||
+      (h.prov||'').toLowerCase().includes(ql) ||
+      (h.dist||'').toLowerCase().includes(ql)
+    ).slice(0,15);
+    searchHtml = results.length ? results.map(renderHotelRow).join("")
+      : `<div class="hint" style="padding:6px 0">ไม่พบที่พักที่ตรงกับ "${esc(searchQ)}"</div>`;
   }
 
   const customHtml=S.hotelPicks.filter(x=>x.custom).map(h=>`<div class="hotel sel">
@@ -997,8 +1000,11 @@ function renderForm(){
       <input class="txt" type="date" min="${dateInputMin()}" max="${dateInputMax()}" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
      ${S.checkin&&S.checkout&&!dateOk?`<div class="errtext">วันออกต้องหลังวันเข้าพัก</div>`:''}
      ${nights>0?`<div class="hint" style="margin:6px 0 0">${nights} คืน</div>`:''}</div>
-    ${effProv?`<div class="card"><div class="label">เลือกที่พัก ${hasBranchCoords(j)?`— จ.${esc(effProv)} หรือใกล้เคียงในระยะ 30 กม. (เรียงตามระยะทาง)`:`— ใน จ.${esc(effProv)} (เรียงตามราคา)`} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
-     ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}</div>`:''}
+    ${effProv?`<div class="card"><div class="label">เลือกที่พัก — จ.${esc(effProv)}${j.dist?` (อ.${esc(j.dist)}ก่อน)`:''} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
+     ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}
+     <div class="label" style="margin-top:14px">ค้นหาที่พักอื่น (ทุกจังหวัด — เผื่อมีที่ใกล้กว่าอยู่จังหวัดข้างเคียง)</div>
+     <input class="txt" placeholder="พิมพ์ชื่อที่พัก อำเภอ หรือจังหวัด..." value="${esc(S.hotelSearch||'')}" oninput="setHotelSearch(this.value)"/>
+     ${searchHtml}</div>`:''}
     <div class="card"><div class="label">จำนวนผู้เข้าพัก (แยกเพศก่อน)</div>
      <div style="display:flex;gap:22px;align-items:center;margin-top:4px">
       <div><div style="font-size:12px;color:var(--female);font-weight:700;margin-bottom:5px">หญิง</div>
