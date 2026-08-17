@@ -44,6 +44,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'employee_home_import') return employeeHomeImport(res, body);
     if (body.action === 'hotel_import') return hotelImport(res, body);
     if (body.action === 'backfill_hotel_codes') return backfillHotelCodes(res);
+    if (body.action === 'hotel_geocode') return hotelGeocode(res, body);
     if (body.action === 'area_assignment_save') return areaAssignmentSave(res, body);
     if (body.action === 'area_approver_add') return areaApproverAdd(res, body);
     if (body.action === 'legacy_import') return legacyImport(res, body);
@@ -764,6 +765,57 @@ async function hotelUpdateCoords(res, body) {
   const { data, error } = await supabase.from('hotels').update({ lat, lng, map_link: mapLink }).eq('code', code).select('id, name').maybeSingle();
   if (error) return fail(res, 500, error.message);
   return json(res, 200, { ok: true, name: data.name });
+}
+
+// ---------------------------------------------------------------- hotel_geocode
+// Batched Google Geocoding API lookup — report-only, never writes lat/lng
+// itself. Every automated attempt at bulk hotel coordinates this project has
+// tried (Choowap import, a district-centroid heuristic, free Nominatim
+// geocoding) turned out wrong or simply had no data for small Thai
+// guesthouses; Google's own index is the one source with real coverage for
+// them, but still needs a human to look at the result before trusting it —
+// same "verify before apply" pattern as the manual audit this replaces.
+// Capped at 80 hotels per call to stay well inside a serverless function's
+// execution window (see vercel.json maxDuration for this file).
+const HOTEL_GEOCODE_BATCH_CAP = 80;
+
+async function hotelGeocode(res, body) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) return fail(res, 500, 'ยังไม่ได้ตั้งค่า GOOGLE_MAPS_API_KEY ใน Vercel (Settings > Environment Variables แล้ว Redeploy)');
+
+  const codes = Array.isArray(body.codes) ? body.codes.map(String) : null;
+  let q = supabase.from('hotels').select('code, name, province, district, lat, lng').eq('active', true).order('code');
+  if (codes && codes.length) q = q.in('code', codes);
+  else q = q.limit(HOTEL_GEOCODE_BATCH_CAP);
+  const { data: hotels, error } = await q;
+  if (error) return fail(res, 500, error.message);
+  if (codes && codes.length > HOTEL_GEOCODE_BATCH_CAP) return fail(res, 400, `ส่งได้ครั้งละไม่เกิน ${HOTEL_GEOCODE_BATCH_CAP} ที่`);
+
+  const results = [];
+  for (const h of hotels || []) {
+    const query = h.district ? `${h.name} อ.${h.district} จ.${h.province}` : `${h.name} จ.${h.province}`;
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&region=th&language=th&components=country:TH&key=${key}`;
+    try {
+      const r = await fetch(url);
+      const d = await r.json();
+      if (d.status === 'OK' && d.results && d.results[0]) {
+        const g = d.results[0];
+        results.push({
+          code: h.code, name: h.name, query,
+          current_lat: h.lat, current_lng: h.lng,
+          found_lat: g.geometry.location.lat, found_lng: g.geometry.location.lng,
+          formatted_address: g.formatted_address,
+          location_type: g.geometry.location_type,
+          partial_match: !!g.partial_match
+        });
+      } else {
+        results.push({ code: h.code, name: h.name, query, current_lat: h.lat, current_lng: h.lng, status: d.status, error: d.error_message || null });
+      }
+    } catch (e) {
+      results.push({ code: h.code, name: h.name, query, current_lat: h.lat, current_lng: h.lng, error: e.message });
+    }
+  }
+  return json(res, 200, { ok: true, count: results.length, results });
 }
 
 // ---------------------------------------------------------------- backfill_hotel_codes

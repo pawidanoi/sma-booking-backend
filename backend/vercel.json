@@ -4,5 +4,8 @@
   ],
   "crons": [
     { "path": "/api/cron-notify", "schedule": "0 2 * * *" }
-  ]
+  ],
+  "functions": {
+    "api/admin-import.js": { "maxDuration": 60 }
+  }
 }
