@@ -822,12 +822,16 @@ async function hotelGeocode(res, body) {
 // ---------------------------------------------------------------- hotel_places_lookup
 // hotel_geocode (Geocoding API) only matches structured postal addresses, so
 // it came back low-confidence for ~360/667 hotels — small guesthouses with no
-// registered address at all. Places' Find Place From Text searches by
-// business name instead (the same mechanism behind Maps' own search bar and
-// the name+district+province search links already used elsewhere in this
-// app), so it should resolve exactly the cases the address-based lookup
-// couldn't. Needs the Places API enabled (and allowed on the API key) in
-// addition to Geocoding API — same key, same env var, one more API to turn on.
+// registered address at all. Places Text Search searches by business name
+// instead (the same mechanism behind Maps' own search bar and the
+// name+district+province search links already used elsewhere in this app),
+// so it should resolve exactly the cases the address-based lookup couldn't.
+// Uses Places API (New) — the legacy findplacefromtext endpoint returns
+// REQUEST_DENIED on projects that only enabled the old "Places API" product;
+// Google now gates new projects to "Places API (New)" specifically, a
+// different product in the API library with a different request shape
+// (POST + JSON body + a required response field mask, not GET + query
+// string). Same key, same env var, just a different API enabled on it.
 const HOTEL_PLACES_BATCH_CAP = 80;
 
 async function hotelPlacesLookup(res, body) {
@@ -845,22 +849,29 @@ async function hotelPlacesLookup(res, body) {
   const results = [];
   for (const h of hotels || []) {
     const query = h.district ? `${h.name} อ.${h.district} จ.${h.province}` : `${h.name} จ.${h.province}`;
-    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=name,formatted_address,geometry,place_id&language=th&key=${key}`;
     try {
-      const r = await fetch(url);
+      const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location'
+        },
+        body: JSON.stringify({ textQuery: query, languageCode: 'th', regionCode: 'TH' })
+      });
       const d = await r.json();
-      if (d.status === 'OK' && d.candidates && d.candidates[0]) {
-        const c = d.candidates[0];
+      if (d.places && d.places[0]) {
+        const p = d.places[0];
         results.push({
           code: h.code, name: h.name, query,
           current_lat: h.lat, current_lng: h.lng,
-          found_name: c.name,
-          found_lat: c.geometry.location.lat, found_lng: c.geometry.location.lng,
-          formatted_address: c.formatted_address,
-          place_id: c.place_id
+          found_name: p.displayName && p.displayName.text,
+          found_lat: p.location.latitude, found_lng: p.location.longitude,
+          formatted_address: p.formattedAddress,
+          place_id: p.id
         });
       } else {
-        results.push({ code: h.code, name: h.name, query, current_lat: h.lat, current_lng: h.lng, status: d.status, error: d.error_message || null });
+        results.push({ code: h.code, name: h.name, query, current_lat: h.lat, current_lng: h.lng, status: 'NO_MATCH', error: (d.error && d.error.message) || null });
       }
     } catch (e) {
       results.push({ code: h.code, name: h.name, query, current_lat: h.lat, current_lng: h.lng, error: e.message });
