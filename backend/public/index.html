@@ -344,19 +344,6 @@ function screenLoading(msg){
 // name+district+province search link serves that even when we have no
 // coordinate at all, and unlike a bare coordinate pin it fails obviously
 // (no result / wrong result) instead of silently pointing at a wrong spot.
-// Branches store the district's full official name ("เมืองนนทบุรี"), but the
-// Choowap-imported hotel registry mostly just has "เมือง" (sometimes with a
-// stray trailing "." from data entry) for the exact same provincial-capital
-// district — a straight string compare would silently treat every "เมือง"
-// hotel as "a different district" from its own province's capital branch.
-// Every Thai province's capital district is "เมือง" + the province name (or
-// bare "เมือง"), so collapsing that prefix to one canonical key fixes it
-// for all provinces at once, not just the one this was caught on.
-function normDistrict(d){
-  if(!d) return '';
-  const s = String(d).trim().replace(/\.+$/,'');
-  return s.indexOf('เมือง')===0 ? 'เมือง' : s;
-}
 function reviewLink(name, dist, prov){
   const q = dist ? `${name} อ.${dist} จ.${prov}` : `${name} จ.${prov}`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
@@ -897,46 +884,56 @@ function renderForm(){
       <input class="txt" placeholder="ระบุสั้นๆ" value="${esc(S.missionNote||'')}" oninput="S.missionNote=this.value"/>`:''}
     </div>` : '';
 
-  // Distance-based sort/filter was dropped — registry hotel coordinates proved
-  // too unreliable to trust even after repeated fix passes, and a bad
-  // coordinate is invisible to whoever's picking, unlike a bad name/district.
-  // Same province is always the default list, same district as the branch
-  // sorted to the top; the free-text search further down covers the case
-  // where a hotel in a neighbouring province is actually the better pick.
-  const jDistKey = normDistrict(j.dist);
-  const list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
-    .sort((a,b) => {
-      const aSame = (jDistKey && normDistrict(a.dist)===jDistKey) ? 0 : 1;
-      const bSame = (jDistKey && normDistrict(b.dist)===jDistKey) ? 0 : 1;
-      if (aSame !== bSame) return aSame - bSame;
-      return (a.price==null?9999:a.price)-(b.price==null?9999:b.price);
-    });
+  // Distance-based sort/filter, restored (district-matching was tried in its
+  // place for a while, then reverted once accurate coordinates were back on
+  // the table via Places API). Same province is always eligible regardless
+  // of distance; a different-province hotel is only eligible within
+  // NEARBY_KM of the branch, which needs the branch's own coordinates —
+  // falls back to the plain province list, price-sorted, when the branch has
+  // none.
+  const NEARBY_KM = 30;
+  let list;
+  if (hasBranchCoords(j)) {
+    list = HOTELS
+      .map(h => Object.assign({}, h, { _km: roadKm(haversine(j.blat, j.blng, h.lat, h.lng)) }))
+      .filter(h => h.prov === effProv || (h._km != null && h._km <= NEARBY_KM))
+      .sort((a,b) => (a._km==null?9999:a._km) - (b._km==null?9999:b._km));
+  } else {
+    list = (effProv ? HOTELS.filter(h=>h.prov===effProv) : []).slice()
+      .sort((a,b)=>(a.price==null?9999:a.price)-(b.price==null?9999:b.price));
+  }
   const renderHotelRow = (h) => {
     const sel=S.hotelPicks.some(x=>x.code===h.code);
-    const distTag = h.dist ? `อ.${esc(h.dist)}` : (h.near?('ใกล้ '+esc(h.near)):'');
+    const dist = h._km!=null ? `ห่าง ~${h._km.toFixed(1)} กม.` : (h.dist?`อ.${esc(h.dist)}`:(h.near?('ใกล้ '+esc(h.near)):''));
     const provTag = h.prov && h.prov!==effProv ? ` · จ.${esc(h.prov)}` : '';
     return `<div class="hotel ${sel?'sel':''}" role="checkbox" aria-checked="${sel}" tabindex="0"
         onclick="toggleHotel('${esc(h.code)}')"
         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleHotel('${esc(h.code)}')}">
       <div class="chk">${sel?'✓':''}</div>
-      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${distTag}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
       <div class="p">${h.price!=null?h.price+'฿<br><small style="font-weight:500;opacity:.7">/ห้อง/คืน</small>':'—'}</div></div>`;
   };
-  // Same split pattern as the old near/far grouping, now keyed on district
-  // match instead of distance — same-district options show immediately, the
-  // rest of the province is one tap away via <details>.
-  const sameDist = jDistKey ? list.filter(h => normDistrict(h.dist)===jDistKey) : [];
-  const otherDist = jDistKey ? list.filter(h => normDistrict(h.dist)!==jDistKey) : list;
-  const sameHtml = sameDist.map(renderHotelRow).join("");
-  const otherHtml = otherDist.length ? (sameDist.length ? `<details style="margin-top:4px">
-      <summary class="disclosure">ที่พักอำเภออื่นในจังหวัดเดียวกัน (${otherDist.length} แห่ง) — แตะเพื่อดู</summary>
-      ${otherDist.map(renderHotelRow).join("")}
-    </details>` : otherDist.map(renderHotelRow).join("")) : '';
-  const hotelHtml = sameHtml + otherHtml;
+  // Grouped by distance so a 30+ item list isn't one undifferentiated scroll —
+  // near options show immediately, farther ones are one tap away via <details>.
+  // Only meaningful when we actually have distances; the province-only
+  // fallback list stays flat since it's price-sorted, not distance-sorted.
+  let hotelHtml;
+  if (hasBranchCoords(j)) {
+    const near = list.filter(h => h._km==null || h._km<=10);
+    const far = list.filter(h => h._km!=null && h._km>10);
+    const nearHtml = near.map(renderHotelRow).join("");
+    const farHtml = far.length ? `<details ${near.length?'':'open'} style="margin-top:4px">
+        <summary class="disclosure">ที่พักไกลกว่า 10 กม. (${far.length} แห่ง) — แตะเพื่อดู</summary>
+        ${far.map(renderHotelRow).join("")}
+      </details>` : '';
+    hotelHtml = nearHtml + farHtml;
+  } else {
+    hotelHtml = list.map(renderHotelRow).join("");
+  }
 
   // Free-text search across every registry hotel regardless of province —
-  // the only way to surface a neighbouring-province hotel that's actually
-  // the better pick, now that picking isn't distance-computed.
+  // covers the case a neighbouring-province hotel is actually the better
+  // pick even when it falls outside the NEARBY_KM cap above.
   const searchQ = (S.hotelSearch||'').trim();
   let searchHtml = '';
   if (searchQ) {
@@ -1034,7 +1031,7 @@ function renderForm(){
       <input class="txt" type="date" min="${dateInputMin()}" max="${dateInputMax()}" value="${esc(S.checkout)}" onchange="S.checkout=this.value;rerender(renderForm)"/></div>
      ${S.checkin&&S.checkout&&!dateOk?`<div class="errtext">วันออกต้องหลังวันเข้าพัก</div>`:''}
      ${nights>0?`<div class="hint" style="margin:6px 0 0">${nights} คืน</div>`:''}</div>
-    ${effProv?`<div class="card"><div class="label">เลือกที่พัก — จ.${esc(effProv)}${j.dist?` (อ.${esc(j.dist)}ก่อน)`:''} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
+    ${effProv?`<div class="card"><div class="label">เลือกที่พัก ${hasBranchCoords(j)?`— จ.${esc(effProv)} หรือใกล้เคียงในระยะ 30 กม. (เรียงตามระยะทาง)`:`— ใน จ.${esc(effProv)} (เรียงตามราคา)`} · เลือกแล้ว ${S.hotelPicks.length}/3</div>
      ${hotelHtml||'<div class="hint">ยังไม่มีที่พักในทะเบียนสำหรับจังหวัดนี้ — เพิ่มที่พักใหม่ได้ด้านล่าง</div>'}${customHtml}${addForm}
      <div class="label" style="margin-top:14px">ค้นหาที่พักอื่น (ทุกจังหวัด — เผื่อมีที่ใกล้กว่าอยู่จังหวัดข้างเคียง)</div>
      <input id="hotelSearchInput" class="txt" placeholder="พิมพ์ชื่อที่พัก อำเภอ หรือจังหวัด..." value="${esc(S.hotelSearch||'')}" oninput="setHotelSearch(this.value)"/>
