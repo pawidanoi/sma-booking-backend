@@ -51,6 +51,8 @@ module.exports = async function handler(req, res) {
     if (body.action === 'legacy_import') return legacyImport(res, body);
     if (body.action === 'employee_update') return employeeUpdate(res, body);
     if (body.action === 'hotel_update_coords') return hotelUpdateCoords(res, body);
+    if (body.action === 'hotel_maplink_apply') return hotelMaplinkApply(res, body);
+    if (body.action === 'hotel_remove') return hotelRemove(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -766,6 +768,71 @@ async function hotelUpdateCoords(res, body) {
   const { data, error } = await supabase.from('hotels').update({ lat, lng, map_link: mapLink }).eq('code', code).select('id, name').maybeSingle();
   if (error) return fail(res, 500, error.message);
   return json(res, 200, { ok: true, name: data.name });
+}
+
+// ------------------------------------------------------------ hotel_maplink_apply
+// Bulk write-back for the coordinate audit CSV: sets map_link (the working
+// query_place_id direct-jump link, built from the Places/Geocoding lookups)
+// per hotel. Never touches lat/lng — the audit deliberately left those alone
+// once a hotel's coordinates were separately confirmed.
+const HOTEL_MAPLINK_BATCH_CAP = 200;
+
+async function hotelMaplinkApply(res, body) {
+  const updates = Array.isArray(body.updates) ? body.updates : [];
+  if (!updates.length) return fail(res, 400, 'ไม่มีข้อมูลให้ปรับปรุง');
+  if (updates.length > HOTEL_MAPLINK_BATCH_CAP) return fail(res, 400, `ส่งได้ครั้งละไม่เกิน ${HOTEL_MAPLINK_BATCH_CAP} ที่`);
+
+  const results = { updated: 0, failed: [] };
+  for (const u of updates) {
+    const code = String(u.code || '').trim();
+    const mapLink = String(u.map_link || '').trim();
+    if (!code || !mapLink) { results.failed.push({ code, reason: 'missing code or map_link' }); continue; }
+    const { error } = await supabase.from('hotels').update({ map_link: mapLink }).eq('code', code);
+    if (error) results.failed.push({ code, reason: error.message });
+    else results.updated++;
+  }
+  return json(res, 200, { ok: true, ...results });
+}
+
+// ---------------------------------------------------------------- hotel_remove
+// Deletes hotel rows the operator identified as junk/duplicate (e.g. no
+// province/district on record, or a duplicate of another row) during the
+// coordinate audit — same "keep booking history intact" guard as
+// hotelImport()'s province refresh: a hotel still referenced by a real
+// booking_hotel_choices row is deactivated instead of deleted.
+async function hotelRemove(res, body) {
+  const codes = Array.isArray(body.codes) ? body.codes.map(String) : [];
+  if (!codes.length) return fail(res, 400, 'ไม่ได้ระบุรหัสที่พัก');
+
+  const { data: rows, error: selErr } = await supabase.from('hotels').select('id, code').in('code', codes);
+  if (selErr) return fail(res, 500, selErr.message);
+  const ids = (rows || []).map((r) => r.id);
+
+  let referencedIds = new Set();
+  if (ids.length) {
+    const { data: refs, error: refErr } = await supabase
+      .from('booking_hotel_choices')
+      .select('hotel_id')
+      .in('hotel_id', ids);
+    if (refErr) return fail(res, 500, refErr.message);
+    referencedIds = new Set((refs || []).map((r) => r.hotel_id));
+  }
+
+  const deletableIds = (rows || []).filter((r) => !referencedIds.has(r.id)).map((r) => r.id);
+  const keepIds = (rows || []).filter((r) => referencedIds.has(r.id)).map((r) => r.id);
+
+  let deleted = 0, deactivated = 0;
+  if (deletableIds.length) {
+    const { error: delErr } = await supabase.from('hotels').delete().in('id', deletableIds);
+    if (delErr) return fail(res, 500, delErr.message);
+    deleted = deletableIds.length;
+  }
+  if (keepIds.length) {
+    const { error: deErr } = await supabase.from('hotels').update({ active: false }).in('id', keepIds);
+    if (deErr) return fail(res, 500, deErr.message);
+    deactivated = keepIds.length;
+  }
+  return json(res, 200, { ok: true, deleted, deactivated, found: (rows || []).length, requested: codes.length });
 }
 
 // ---------------------------------------------------------------- hotel_geocode

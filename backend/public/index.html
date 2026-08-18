@@ -353,7 +353,7 @@ function normHotel(h){
   return { id:h.id, code:h.code, name:h.name, prov:h.province, dist:h.district||null, near:h.near_area,
            lat, lng,
            price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
-           choowap:!!h.on_choowap, mapLink: reviewLink(h.name, h.district, h.province) };
+           choowap:!!h.on_choowap, mapLink: h.map_link || reviewLink(h.name, h.district, h.province) };
 }
 // Shared everywhere a hotel/map link needs a tap-out button — stops the click
 // from bubbling into whatever selects/toggles the row it sits on.
@@ -430,11 +430,11 @@ function normBooking(b){
     name: c.hotels ? c.hotels.name : c.custom_name,
     price: c.custom_price!=null ? Number(c.custom_price) : (c.hotels && c.hotels.default_price_per_night!=null ? Number(c.hotels.default_price_per_night) : null),
     near: c.hotels ? c.hotels.near_area : null,
-    // Same reason as normHotel()'s mapLink — a name+district+province search
-    // link, not a coordinate pin (registry coordinates aren't trustworthy
-    // enough to point a bare pin at). Custom (no-registry) hotels keep using
-    // their own pasted link.
-    map: c.hotels ? reviewLink(c.hotels.name, c.hotels.district, c.hotels.province) : (c.custom_map_link || ''),
+    // Same reason as normHotel()'s mapLink — a verified place_id link where
+    // the coordinate audit found one, else a name+district+province search
+    // (registry coordinates aren't trustworthy enough to point a bare pin
+    // at). Custom (no-registry) hotels keep using their own pasted link.
+    map: c.hotels ? (c.hotels.map_link || reviewLink(c.hotels.name, c.hotels.district, c.hotels.province)) : (c.custom_map_link || ''),
     custom: !c.hotel_id,
     lat: c.hotels && c.hotels.lat!=null ? Number(c.hotels.lat) : null,
     lng: c.hotels && c.hotels.lng!=null ? Number(c.hotels.lng) : null,
