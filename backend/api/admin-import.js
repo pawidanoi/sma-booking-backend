@@ -53,6 +53,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'hotel_update_coords') return hotelUpdateCoords(res, body);
     if (body.action === 'hotel_maplink_apply') return hotelMaplinkApply(res, body);
     if (body.action === 'hotel_remove') return hotelRemove(res, body);
+    if (body.action === 'hotel_coords_apply') return hotelCoordsApply(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -833,6 +834,30 @@ async function hotelRemove(res, body) {
     deactivated = keepIds.length;
   }
   return json(res, 200, { ok: true, deleted, deactivated, found: (rows || []).length, requested: codes.length });
+}
+
+// ------------------------------------------------------------ hotel_coords_apply
+// Bulk write-back for the coordinate audit's verified corrections (AI deep
+// research + Geocoding + Places API, all cross-checked against the current
+// value before being called "wrong") — same batch shape as
+// hotel_maplink_apply, distinct action since it writes lat/lng instead.
+const HOTEL_COORDS_BATCH_CAP = 200;
+
+async function hotelCoordsApply(res, body) {
+  const updates = Array.isArray(body.updates) ? body.updates : [];
+  if (!updates.length) return fail(res, 400, 'ไม่มีข้อมูลให้ปรับปรุง');
+  if (updates.length > HOTEL_COORDS_BATCH_CAP) return fail(res, 400, `ส่งได้ครั้งละไม่เกิน ${HOTEL_COORDS_BATCH_CAP} ที่`);
+
+  const results = { updated: 0, failed: [] };
+  for (const u of updates) {
+    const code = String(u.code || '').trim();
+    const lat = Number(u.lat), lng = Number(u.lng);
+    if (!code || !Number.isFinite(lat) || !Number.isFinite(lng)) { results.failed.push({ code, reason: 'missing code or coords' }); continue; }
+    const { error } = await supabase.from('hotels').update({ lat, lng }).eq('code', code);
+    if (error) results.failed.push({ code, reason: error.message });
+    else results.updated++;
+  }
+  return json(res, 200, { ok: true, ...results });
 }
 
 // ---------------------------------------------------------------- hotel_geocode
