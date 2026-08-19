@@ -356,17 +356,6 @@ function redrawTable(){
 
 function openModal(id){
   const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
-  // Only legacy rows (booking_id===null) get the inline "add names" box —
-  // live bookings' guest names come from booking_guests and are edited via
-  // the normal booking flow, not from here. Always-visible textarea (not a
-  // hidden prompt() dialog) so the field is obviously there to fill in.
-  const guestRow = r.booking_id===null
-    ? `<div class="row" style="flex-direction:column;align-items:stretch;gap:6px">
-        <span>ผู้เข้าพัก (คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่)</span>
-        <textarea id="guestNamesInput" rows="3" style="width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;resize:vertical">${esc(r.guest_names||'')}</textarea>
-        <button class="xlbtn" onclick="saveGuestNames(${JSON.stringify(r.id)})" style="align-self:flex-end">💾 บันทึกรายชื่อ</button>
-       </div>`
-    : `<div class="row"><span>ผู้เข้าพัก</span><span>${esc(r.guest_names||'—')}</span></div>`;
   $("#modalRoot").innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal">
       <h3>${esc(r.id)}</h3>
@@ -375,7 +364,6 @@ function openModal(id){
       <div class="row"><span>ทีม</span><span>${esc(r.team_code||'—')}</span></div>
       <div class="row"><span>สาขา</span><span>${esc(r.branch_name||'—')}</span></div>
       <div class="row"><span>ที่พัก</span><span>${esc(r.hotel_name||'—')}</span></div>
-      ${guestRow}
       <div class="row"><span>ห้อง / คน / คืน</span><span>${r.rooms||0} / ${r.people||0} / ${r.nights||0}</span></div>
       <div class="row"><span>เตียงว่าง</span><span>${r.empty_beds||0}</span></div>
       <div class="row"><span>ค่าใช้จ่ายรวม</span><span>${fmtMoney(r.total_cost)}</span></div>
@@ -386,22 +374,6 @@ function openModal(id){
     </div></div>`;
 }
 function closeModal(){ $("#modalRoot").innerHTML=''; }
-
-// Legacy-only: fills in the guest names a paper-era booking never recorded.
-// Free text (comma or newline separated), stored verbatim — these rows have
-// no employee_code to validate against, unlike live bookings' booking_guests.
-async function saveGuestNames(id){
-  const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
-  const el = $("#guestNamesInput"); if(!el) return;
-  const value = el.value.trim();
-  if(!ME){ alert('ต้องเข้าสู่ระบบก่อนแก้ไขข้อมูล'); return; }
-  try{
-    await apiSend('/admin-import', { actor: ME.code, action:'legacy_guest_names_update', id, guest_names: value });
-    r.guest_names = value || null;
-    alert('บันทึกรายชื่อผู้เข้าพักแล้ว');
-    openModal(id);
-  }catch(e){ alert(e.message || 'บันทึกไม่สำเร็จ'); }
-}
 
 // Every branch × every hotel is only ~245×650 pairs — cheap enough to just
 // recompute in the browser each render rather than caching or paging it.
@@ -685,7 +657,6 @@ function exportTableToExcel(){
     return SORT.dir==='asc'?cmp:-cmp;
   }).map(r=>({
     'วันที่เข้าพัก': fmtDateThai(r.checkin_date), 'เช็คเอ้าท์': fmtDateThai(r.checkout_date), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
-    'ผู้เข้าพัก': r.guest_names||'—',
     'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
     'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
     'บาท/คน-คืน': r.baht_per_person_night||0
@@ -735,7 +706,6 @@ function exportAllToExcel(){
 
   XLSX.utils.book_append_sheet(wb, sheetFromRows(ALL_RECORDS.slice().sort((a,b)=>String(a.checkin_date||'').localeCompare(String(b.checkin_date||''))).map(r=>({
     'วันที่เข้าพัก': fmtDateThai(r.checkin_date), 'เช็คเอ้าท์': fmtDateThai(r.checkout_date), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
-    'ผู้เข้าพัก': r.guest_names||'—',
     'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
     'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
     'บาท/คน-คืน': r.baht_per_person_night||0

@@ -1719,8 +1719,47 @@ function drawEmployeeRoster(){
     <div style="flex:1"><h1>จัดการพนักงาน</h1><span class="sub">${EMP_ROSTER.length} คน</span></div></div>
    <div class="body">
     <input class="txt" placeholder="ค้นหารหัส/ชื่อ/ทีม" value="${esc(EMP_ROSTER_FILTER)}" oninput="setEmpRosterFilter(this.value)"/>
+    <div class="addnew" onclick="openEmployeeAdd()">+ เพิ่มพนักงานใหม่</div>
     <div style="margin-top:10px">${rows||'<div class="hint">ไม่พบพนักงาน</div>'}</div>
    </div></div>`;
+}
+let EMP_NEW_GENDER=null;
+function openEmployeeAdd(){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="drawEmployeeRoster()">‹</span><h1>เพิ่มพนักงานใหม่</h1></div>
+   <div class="body">
+    <div class="card">
+     <div class="label">รหัสพนักงาน</div><input class="txt" id="newEmpCode" placeholder="เช่น CMT2600123"/>
+     <div class="label" style="margin-top:10px">ชื่อ-นามสกุล</div><input class="txt" id="newEmpName"/>
+     <div class="label" style="margin-top:10px">ชื่อเล่น</div><input class="txt" id="newEmpNickname" placeholder="เว้นว่างได้"/>
+     <div class="label" style="margin-top:10px">ทีม</div>
+     <select class="txt" id="newEmpTeam"><option value="">— เลือกทีม —</option>${TEAMS.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select>
+     <div class="label" style="margin-top:10px">ตำแหน่ง</div>
+     <input class="txt" id="newEmpPosition" placeholder="เว้นว่าง = พนักงานทั่วไป"/>
+     <div class="label" style="margin-top:10px">เพศ</div>
+     <div class="chips"><div class="chip ${EMP_NEW_GENDER==='F'?'sel':''}" onclick="EMP_NEW_GENDER='F';rerender(openEmployeeAdd)">หญิง</div>
+      <div class="chip ${EMP_NEW_GENDER==='M'?'sel':''}" onclick="EMP_NEW_GENDER='M';rerender(openEmployeeAdd)">ชาย</div></div>
+     <div class="label" style="margin-top:10px">เบอร์โทร</div>
+     <input class="txt" id="newEmpPhone" placeholder="เว้นว่างได้"/>
+    </div>
+    <button class="btn" onclick="saveEmployeeAdd()">เพิ่มพนักงาน</button>
+   </div></div>`;
+}
+async function saveEmployeeAdd(){
+  const code=(($("#newEmpCode")||{}).value||'').trim();
+  const name=(($("#newEmpName")||{}).value||'').trim();
+  const nickname=(($("#newEmpNickname")||{}).value||'').trim();
+  const team_code=($("#newEmpTeam")||{}).value;
+  const position=(($("#newEmpPosition")||{}).value||'').trim();
+  const phone=(($("#newEmpPhone")||{}).value||'').trim();
+  if(!code){ toast('กรุณาใส่รหัสพนักงาน'); return; }
+  if(!name){ toast('กรุณาใส่ชื่อ-นามสกุล'); return; }
+  if(!team_code){ toast('กรุณาเลือกทีม'); return; }
+  try{
+    await apiSend('/admin-import','POST',{ action:'employee_create', code, name, nickname, team_code, position, gender:EMP_NEW_GENDER, phone });
+    toast('เพิ่มพนักงานแล้ว ✓');
+    EMP_NEW_GENDER=null;
+    renderEmployeeRoster();
+  }catch(e){ toast(e.message); }
 }
 let EMP_EDIT_CODE=null, EMP_EDIT_GENDER, EMP_EDIT_ACTIVE;
 function openEmployeeEdit(code){
