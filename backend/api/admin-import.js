@@ -54,6 +54,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'hotel_maplink_apply') return hotelMaplinkApply(res, body);
     if (body.action === 'hotel_remove') return hotelRemove(res, body);
     if (body.action === 'hotel_coords_apply') return hotelCoordsApply(res, body);
+    if (body.action === 'legacy_guest_names_update') return legacyGuestNamesUpdate(res, body);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -1118,6 +1119,13 @@ async function legacyImport(res, body) {
       hotel_name: hotelName,
       checkin_date: row.checkin_date || null,
       checkout_date: row.checkout_date || null,
+      // Distinct from checkin/checkout: the actual on-site work dates, one day
+      // narrower than the hotel stay (staff arrive the night before, leave the
+      // morning after). Falls back to the hotel dates for older batches that
+      // never recorded this separately.
+      event_date_start: row.event_date_start || row.checkin_date || null,
+      event_date_end: row.event_date_end || row.checkout_date || null,
+      guest_names: row.guest_names || null,
       nights,
       rooms: Number.isFinite(rooms) ? rooms : null,
       people,
@@ -1143,6 +1151,25 @@ async function legacyImport(res, body) {
   }
 
   return json(res, 200, { ok: true, inserted, skipped: skipped.length, skipped_detail: skipped });
+}
+
+// ------------------------------------------------------------ legacy_guest_names_update
+// Manual bookings imported via legacy_import carry no guest names (the source
+// spreadsheets only ever had head-counts by gender) — this lets an admin fill
+// them in afterward from the dashboard, same free-text shape as the column.
+async function legacyGuestNamesUpdate(res, body) {
+  const id = String(body.id || '').trim();
+  const guestNames = String(body.guest_names || '').trim();
+  if (!id) return fail(res, 400, 'ไม่พบรหัสรายการ');
+  const { data, error } = await supabase
+    .from('booking_legacy_summary')
+    .update({ guest_names: guestNames || null })
+    .eq('id', id)
+    .select('id')
+    .maybeSingle();
+  if (error) return fail(res, 500, error.message);
+  if (!data) return fail(res, 404, 'ไม่พบรายการนี้');
+  return json(res, 200, { ok: true, id: data.id });
 }
 
 // ---------------------------------------------------------------- shared helpers

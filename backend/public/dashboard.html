@@ -77,12 +77,32 @@ const ACTOR_STORAGE_KEY = 'sma_actor_code';
 const $ = s => document.querySelector(s);
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function fmtMoney(v){ return "฿" + Math.round(v||0).toLocaleString("th-TH"); }
+function fmtDateThai(dateStr){
+  if(!dateStr) return '—';
+  const d = new Date(dateStr);
+  if(isNaN(d)) return '—';
+  const be = d.getFullYear()+543;
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${String(be).slice(-2)}`;
+}
+// Same straight-line + circuity-factor convention as the booking form's hotel
+// picker (index.html) — not the real-routing /directions call used for single
+// pairs elsewhere on this page, since scanning every branch against every
+// hotel that way would be hundreds of API calls just to build one table.
+function haversineKm(lat1,lng1,lat2,lng2){
+  const R=6371, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLng=toRad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+const ROAD_CIRCUITY_FACTOR = 1.3;
+function roadKm(straightKm){ return straightKm*ROAD_CIRCUITY_FACTOR; }
+const COVERAGE_RADIUS_KM = 10;
 
 let ME = null;
 let ALL_RECORDS = [];
 let LAST_SUMMARY = null;
 let FILTERS = { month:'', team:'', src:'', search:'' };
-let SORT = { key:'total_cost', dir:'desc' };
+let SORT = { key:'event_date_start', dir:'asc' };
 let PAGE = 0;
 const PAGE_SIZE = 50;
 const CHARTS = {};
@@ -93,6 +113,12 @@ async function apiGet(path){
   const r = await fetch(API+path, { headers:{ 'Accept':'application/json' } });
   const j = await r.json().catch(()=>({ error:'ระบบตอบกลับไม่ถูกรูปแบบ' }));
   if(!r.ok) throw new Error(j.error || ('โหลดข้อมูลไม่สำเร็จ ('+r.status+')'));
+  return j;
+}
+async function apiSend(path, body){
+  const r = await fetch(API+path, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(()=>({ error:'ระบบตอบกลับไม่ถูกรูปแบบ' }));
+  if(!r.ok) throw new Error(j.error || ('บันทึกไม่สำเร็จ ('+r.status+')'));
   return j;
 }
 
@@ -114,9 +140,9 @@ function renderLogin(err){
 
 function captureRegistries(d){
   DASH_BRANCHES = (d.branches||[]).filter(b=>b.lat!=null && b.lng!=null && b.lat!==0 && b.lng!==0)
-    .map(b=>({ code:b.code, name:b.name, lat:Number(b.lat), lng:Number(b.lng) }));
+    .map(b=>({ code:b.code, name:b.name, province:b.province||'', lat:Number(b.lat), lng:Number(b.lng) }));
   DASH_HOTELS = (d.hotels||[]).filter(h=>h.lat!=null && h.lng!=null && h.lat!==0 && h.lng!==0)
-    .map(h=>({ code:h.code, name:h.name, lat:Number(h.lat), lng:Number(h.lng) }));
+    .map(h=>({ code:h.code, name:h.name, province:h.province||'', district:h.district||'', lat:Number(h.lat), lng:Number(h.lng) }));
 }
 
 async function doLogin(){
@@ -193,22 +219,33 @@ function renderDashboard(d){
         <div class="table-scroll">
         <table>
           <thead><tr>
-            <th onclick="setSort('month_label')">เดือน</th><th onclick="setSort('team_code')">ทีม</th>
+            <th onclick="setSort('event_date_start')">วันจัดงาน</th><th onclick="setSort('team_code')">ทีม</th>
             <th onclick="setSort('branch_name')">สาขา</th><th onclick="setSort('hotel_name')">ที่พัก</th>
             <th class="num" onclick="setSort('nights')">คืน</th><th class="num" onclick="setSort('people')">คน</th>
             <th class="num" onclick="setSort('empty_beds')">เตียงว่าง</th><th class="num" onclick="setSort('total_cost')">รวม (฿)</th>
-            <th class="num" onclick="setSort('empty_bed_cost')">ค่าเตียงว่าง (฿)</th><th>สถานะ</th>
+            <th class="num" onclick="setSort('empty_bed_cost')">ค่าเตียงว่าง (฿)</th>
           </tr></thead>
           <tbody id="tbody"></tbody>
         </table>
         </div>
         <div class="pager" id="pager"></div>
       </div>
+      <div class="card">
+        <div class="card-head"><h3>ความครอบคลุมที่พัก — ที่พักในรัศมี ${COVERAGE_RADIUS_KM} กม. ต่อสาขา</h3></div>
+        <div class="hint" style="margin-bottom:8px">เรียงจากสาขาที่มีที่พักใกล้น้อยที่สุดก่อน — ใช้หาสาขาที่ควรเพิ่มที่พักในทะเบียน คลิกแถวเพื่อดูรายชื่อที่พัก</div>
+        <div class="table-scroll">
+        <table>
+          <thead><tr><th>สาขา</th><th>จังหวัด</th><th class="num">ที่พักในรัศมี ${COVERAGE_RADIUS_KM} กม.</th></tr></thead>
+          <tbody id="coverageTbody"></tbody>
+        </table>
+        </div>
+      </div>
     </div>
     <div id="modalRoot"></div>`;
 
   refreshKpisAndCharts();
   redrawTable();
+  redrawCoverageTable();
   initDashMap();
 }
 
@@ -303,12 +340,11 @@ function redrawTable(){
   const pageRows = rows.slice(PAGE*PAGE_SIZE, (PAGE+1)*PAGE_SIZE);
 
   $("#tbody").innerHTML = pageRows.map(r=>`<tr onclick='onRowClick(${JSON.stringify(r.id)})'>
-    <td>${esc(r.month_label)}</td><td>${esc(r.team_code||'—')}</td>
+    <td>${esc(fmtDateThai(r.event_date_start))}</td><td>${esc(r.team_code||'—')}</td>
     <td>${esc(r.branch_name||'—')}</td><td>${esc(r.hotel_name||'—')}</td>
     <td class="num">${r.nights||0}</td><td class="num">${r.people||0}</td>
     <td class="num">${r.empty_beds||0}</td><td class="num">${fmtMoney(r.total_cost)}</td>
-    <td class="num">${fmtMoney(r.empty_bed_cost)}</td>
-    <td>${r.needs_manual_fix?'<span class="fix">ต้องแก้</span>':'ปกติ'}</td></tr>`).join("");
+    <td class="num">${fmtMoney(r.empty_bed_cost)}</td></tr>`).join("");
 
   $("#pager").innerHTML = `<button ${PAGE===0?'disabled':''} onclick="PAGE--;redrawTable()">‹ ก่อนหน้า</button>
     <span>หน้า ${PAGE+1}/${totalPages} · ${rows.length} รายการ</span>
@@ -317,13 +353,21 @@ function redrawTable(){
 
 function openModal(id){
   const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
+  // Only legacy rows (booking_id===null) get the inline "add names" control —
+  // live bookings' guest names come from booking_guests and are edited via
+  // the normal booking flow, not from here.
+  const guestRow = r.booking_id===null
+    ? `<div class="row"><span>ผู้เข้าพัก</span><span>${esc(r.guest_names||'ยังไม่ได้ระบุ')} <a onclick="editGuestNames(${JSON.stringify(r.id)})" style="cursor:pointer;color:var(--brand2);font-weight:700">✏️ ${r.guest_names?'แก้ไข':'เพิ่มชื่อ'}</a></span></div>`
+    : `<div class="row"><span>ผู้เข้าพัก</span><span>${esc(r.guest_names||'—')}</span></div>`;
   $("#modalRoot").innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal">
       <h3>${esc(r.id)}</h3>
+      <div class="row"><span>วันจัดงาน</span><span>${esc(fmtDateThai(r.event_date_start))} – ${esc(fmtDateThai(r.event_date_end))}</span></div>
       <div class="row"><span>เดือน</span><span>${esc(r.month_label)}</span></div>
       <div class="row"><span>ทีม</span><span>${esc(r.team_code||'—')}</span></div>
       <div class="row"><span>สาขา</span><span>${esc(r.branch_name||'—')}</span></div>
       <div class="row"><span>ที่พัก</span><span>${esc(r.hotel_name||'—')}</span></div>
+      ${guestRow}
       <div class="row"><span>ห้อง / คน / คืน</span><span>${r.rooms||0} / ${r.people||0} / ${r.nights||0}</span></div>
       <div class="row"><span>เตียงว่าง</span><span>${r.empty_beds||0}</span></div>
       <div class="row"><span>ค่าใช้จ่ายรวม</span><span>${fmtMoney(r.total_cost)}</span></div>
@@ -334,6 +378,57 @@ function openModal(id){
     </div></div>`;
 }
 function closeModal(){ $("#modalRoot").innerHTML=''; }
+
+// Legacy-only: fills in the guest names a paper-era booking never recorded.
+// Free text (comma or newline separated), stored verbatim — these rows have
+// no employee_code to validate against, unlike live bookings' booking_guests.
+async function editGuestNames(id){
+  const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
+  const input = prompt('รายชื่อผู้เข้าพัก (คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่)', r.guest_names||'');
+  if(input===null) return;
+  try{
+    if(!ME){ alert('ต้องเข้าสู่ระบบก่อนแก้ไขข้อมูล'); return; }
+    await apiSend('/admin-import', { actor: ME.code, action:'legacy_guest_names_update', id, guest_names: input.trim() });
+    r.guest_names = input.trim() || null;
+    openModal(id);
+  }catch(e){ alert(e.message || 'บันทึกไม่สำเร็จ'); }
+}
+
+// Every branch × every hotel is only ~245×650 pairs — cheap enough to just
+// recompute in the browser each render rather than caching or paging it.
+function branchCoverage(branchCode){
+  const b = DASH_BRANCHES.find(x=>x.code===branchCode);
+  if(!b) return [];
+  return DASH_HOTELS
+    .map(h=>({ ...h, km: roadKm(haversineKm(b.lat,b.lng,h.lat,h.lng)) }))
+    .filter(h=>h.km<=COVERAGE_RADIUS_KM)
+    .sort((a,b)=>a.km-b.km);
+}
+
+function redrawCoverageTable(){
+  const rows = DASH_BRANCHES.map(b=>({ ...b, count: branchCoverage(b.code).length }))
+    .sort((a,b)=>a.count-b.count || a.name.localeCompare(b.name));
+  $("#coverageTbody").innerHTML = rows.map(b=>`<tr onclick='openCoverageModal(${JSON.stringify(b.code)})' style="cursor:pointer">
+    <td>${esc(b.name)}</td><td>${esc(b.province||'—')}</td>
+    <td class="num">${b.count===0?'<span class="fix">0</span>':b.count}</td></tr>`).join("");
+}
+
+function openCoverageModal(branchCode){
+  const b = DASH_BRANCHES.find(x=>x.code===branchCode); if(!b) return;
+  const hotels = branchCoverage(branchCode);
+  const list = hotels.length
+    ? hotels.map(h=>`<div class="row"><span>${esc(h.name)}${h.district?` · ${esc(h.district)}`:''}</span><span>${h.km.toFixed(1)} กม.</span></div>`).join("")
+    : `<div class="row"><span>ไม่มีที่พักในรัศมี ${COVERAGE_RADIUS_KM} กม.</span><span></span></div>`;
+  $("#modalRoot").innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <h3>${esc(b.name)}</h3>
+      <div class="row"><span>จังหวัด</span><span>${esc(b.province||'—')}</span></div>
+      <div class="row"><span>ที่พักในรัศมี ${COVERAGE_RADIUS_KM} กม.</span><span>${hotels.length} ที่</span></div>
+      <div style="margin-top:10px;font-weight:700">รายชื่อที่พัก (เรียงตามระยะ)</div>
+      ${list}
+      <div class="close" onclick="closeModal()">ปิด</div>
+    </div></div>`;
+}
 
 async function onRowClick(id){
   openModal(id);
@@ -574,10 +669,11 @@ function exportTableToExcel(){
     else cmp = String(av||'').localeCompare(String(bv||''));
     return SORT.dir==='asc'?cmp:-cmp;
   }).map(r=>({
-    'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+    'วันจัดงาน': fmtDateThai(r.event_date_start), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+    'ผู้เข้าพัก': r.guest_names||'—',
     'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
     'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
-    'บาท/คน-คืน': r.baht_per_person_night||0, 'สถานะ': r.needs_manual_fix?'ต้องแก้':'ปกติ'
+    'บาท/คน-คืน': r.baht_per_person_night||0
   }));
   if(!rows.length){ alert('ไม่มีข้อมูลให้ export (ตามตัวกรองปัจจุบัน)'); return; }
   const wb = XLSX.utils.book_new();
@@ -622,11 +718,12 @@ function exportAllToExcel(){
     'ที่พัก': h.hotel_name, 'ค่าใช้จ่ายรวม (บาท)': h.total_cost
   }))), 'ที่พักสูงสุด10');
 
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(ALL_RECORDS.map(r=>({
-    'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(ALL_RECORDS.slice().sort((a,b)=>String(a.event_date_start||'').localeCompare(String(b.event_date_start||''))).map(r=>({
+    'วันจัดงาน': fmtDateThai(r.event_date_start), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+    'ผู้เข้าพัก': r.guest_names||'—',
     'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
     'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
-    'บาท/คน-คืน': r.baht_per_person_night||0, 'สถานะ': r.needs_manual_fix?'ต้องแก้':'ปกติ'
+    'บาท/คน-คืน': r.baht_per_person_night||0
   }))), 'รายละเอียดทั้งหมด');
 
   downloadWorkbook(wb, `แดชบอร์ดผู้บริหาร-${todayStamp()}.xlsx`);
