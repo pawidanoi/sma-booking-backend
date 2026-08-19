@@ -221,7 +221,7 @@ function renderDashboard(d){
         <div class="table-scroll">
         <table>
           <thead><tr>
-            <th onclick="setSort('event_date_start')">วันจัดงาน</th><th onclick="setSort('team_code')">ทีม</th>
+            <th onclick="setSort('checkin_date')">วันที่เข้าพัก</th><th onclick="setSort('team_code')">ทีม</th>
             <th onclick="setSort('branch_name')">สาขา</th><th onclick="setSort('hotel_name')">ที่พัก</th>
             <th class="num" onclick="setSort('nights')">คืน</th><th class="num" onclick="setSort('people')">คน</th>
             <th class="num" onclick="setSort('empty_beds')">เตียงว่าง</th><th class="num" onclick="setSort('total_cost')">รวม (฿)</th>
@@ -343,7 +343,7 @@ function redrawTable(){
   const pageRows = rows.slice(PAGE*PAGE_SIZE, (PAGE+1)*PAGE_SIZE);
 
   $("#tbody").innerHTML = pageRows.map(r=>`<tr onclick='onRowClick(${JSON.stringify(r.id)})'>
-    <td>${esc(fmtDateThai(r.event_date_start))}</td><td>${esc(r.team_code||'—')}</td>
+    <td>${esc(fmtDateThai(r.checkin_date))}</td><td>${esc(r.team_code||'—')}</td>
     <td>${esc(r.branch_name||'—')}</td><td>${esc(r.hotel_name||'—')}</td>
     <td class="num">${r.nights||0}</td><td class="num">${r.people||0}</td>
     <td class="num">${r.empty_beds||0}</td><td class="num">${fmtMoney(r.total_cost)}</td>
@@ -370,7 +370,7 @@ function openModal(id){
   $("#modalRoot").innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal">
       <h3>${esc(r.id)}</h3>
-      <div class="row"><span>วันจัดงาน</span><span>${esc(fmtDateThai(r.event_date_start))} – ${esc(fmtDateThai(r.event_date_end))}</span></div>
+      <div class="row"><span>วันที่เข้าพัก – เช็คเอ้าท์</span><span>${esc(fmtDateThai(r.checkin_date))} – ${esc(fmtDateThai(r.checkout_date))}</span></div>
       <div class="row"><span>เดือน</span><span>${esc(r.month_label)}</span></div>
       <div class="row"><span>ทีม</span><span>${esc(r.team_code||'—')}</span></div>
       <div class="row"><span>สาขา</span><span>${esc(r.branch_name||'—')}</span></div>
@@ -684,7 +684,7 @@ function exportTableToExcel(){
     else cmp = String(av||'').localeCompare(String(bv||''));
     return SORT.dir==='asc'?cmp:-cmp;
   }).map(r=>({
-    'วันจัดงาน': fmtDateThai(r.event_date_start), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+    'วันที่เข้าพัก': fmtDateThai(r.checkin_date), 'เช็คเอ้าท์': fmtDateThai(r.checkout_date), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
     'ผู้เข้าพัก': r.guest_names||'—',
     'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
     'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,
@@ -733,8 +733,8 @@ function exportAllToExcel(){
     'ที่พัก': h.hotel_name, 'ค่าใช้จ่ายรวม (บาท)': h.total_cost
   }))), 'ที่พักสูงสุด10');
 
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(ALL_RECORDS.slice().sort((a,b)=>String(a.event_date_start||'').localeCompare(String(b.event_date_start||''))).map(r=>({
-    'วันจัดงาน': fmtDateThai(r.event_date_start), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(ALL_RECORDS.slice().sort((a,b)=>String(a.checkin_date||'').localeCompare(String(b.checkin_date||''))).map(r=>({
+    'วันที่เข้าพัก': fmtDateThai(r.checkin_date), 'เช็คเอ้าท์': fmtDateThai(r.checkout_date), 'เดือน': r.month_label, 'ทีม': r.team_code||'—', 'สาขา': r.branch_name||'—', 'ที่พัก': r.hotel_name||'—',
     'ผู้เข้าพัก': r.guest_names||'—',
     'คืน': r.nights||0, 'ห้อง': r.rooms||0, 'คน': r.people||0, 'เตียงว่าง': r.empty_beds||0,
     'ค่าใช้จ่ายรวม (บาท)': r.total_cost||0, 'ค่าเตียงว่าง (บาท)': r.empty_bed_cost||0,

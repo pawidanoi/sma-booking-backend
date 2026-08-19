@@ -142,6 +142,8 @@ function toLegacyRecord(r) {
     needs_manual_fix: !!r.needs_manual_fix,
     event_date_start: r.event_date_start || r.checkin_date || null,
     event_date_end: r.event_date_end || r.checkout_date || null,
+    checkin_date: r.checkin_date || null,
+    checkout_date: r.checkout_date || null,
     guest_names: r.guest_names || null,
     booking_id: null,
     branch_lat: null, branch_lng: null, hotel_lat: null, hotel_lng: null, home_lat: null, home_lng: null
@@ -178,6 +180,8 @@ function toLiveRecord(row, homeByCode) {
     needs_manual_fix: false,
     event_date_start: b.checkin_date || null,
     event_date_end: b.checkout_date || null,
+    checkin_date: b.checkin_date || null,
+    checkout_date: b.checkout_date || null,
     guest_names: (b.booking_guests || []).map((g) => g.name).filter(Boolean).join(', ') || null,
     booking_id: b.id,
     branch_lat: numOrNull(b.branches && b.branches.lat),
