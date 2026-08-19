@@ -102,9 +102,11 @@ let ME = null;
 let ALL_RECORDS = [];
 let LAST_SUMMARY = null;
 let FILTERS = { month:'', team:'', src:'', search:'' };
-let SORT = { key:'event_date_start', dir:'asc' };
+let SORT = { key:'total_cost', dir:'desc' };
 let PAGE = 0;
 const PAGE_SIZE = 50;
+let COVERAGE_PAGE = 0;
+const COVERAGE_PAGE_SIZE = 10;
 const CHARTS = {};
 let DASH_MAP = null, DASH_HIGHLIGHT = null, DASH_MEASURE = null;
 let DASH_BRANCHES = [], DASH_HOTELS = [], DASH_HOMES = [];
@@ -239,6 +241,7 @@ function renderDashboard(d){
           <tbody id="coverageTbody"></tbody>
         </table>
         </div>
+        <div class="pager" id="coveragePager"></div>
       </div>
     </div>
     <div id="modalRoot"></div>`;
@@ -353,11 +356,16 @@ function redrawTable(){
 
 function openModal(id){
   const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
-  // Only legacy rows (booking_id===null) get the inline "add names" control —
+  // Only legacy rows (booking_id===null) get the inline "add names" box —
   // live bookings' guest names come from booking_guests and are edited via
-  // the normal booking flow, not from here.
+  // the normal booking flow, not from here. Always-visible textarea (not a
+  // hidden prompt() dialog) so the field is obviously there to fill in.
   const guestRow = r.booking_id===null
-    ? `<div class="row"><span>ผู้เข้าพัก</span><span>${esc(r.guest_names||'ยังไม่ได้ระบุ')} <a onclick="editGuestNames(${JSON.stringify(r.id)})" style="cursor:pointer;color:var(--brand2);font-weight:700">✏️ ${r.guest_names?'แก้ไข':'เพิ่มชื่อ'}</a></span></div>`
+    ? `<div class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+        <span>ผู้เข้าพัก (คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่)</span>
+        <textarea id="guestNamesInput" rows="3" style="width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;resize:vertical">${esc(r.guest_names||'')}</textarea>
+        <button class="xlbtn" onclick="saveGuestNames(${JSON.stringify(r.id)})" style="align-self:flex-end">💾 บันทึกรายชื่อ</button>
+       </div>`
     : `<div class="row"><span>ผู้เข้าพัก</span><span>${esc(r.guest_names||'—')}</span></div>`;
   $("#modalRoot").innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal">
@@ -382,14 +390,15 @@ function closeModal(){ $("#modalRoot").innerHTML=''; }
 // Legacy-only: fills in the guest names a paper-era booking never recorded.
 // Free text (comma or newline separated), stored verbatim — these rows have
 // no employee_code to validate against, unlike live bookings' booking_guests.
-async function editGuestNames(id){
+async function saveGuestNames(id){
   const r = ALL_RECORDS.find(x=>x.id===id); if(!r) return;
-  const input = prompt('รายชื่อผู้เข้าพัก (คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่)', r.guest_names||'');
-  if(input===null) return;
+  const el = $("#guestNamesInput"); if(!el) return;
+  const value = el.value.trim();
+  if(!ME){ alert('ต้องเข้าสู่ระบบก่อนแก้ไขข้อมูล'); return; }
   try{
-    if(!ME){ alert('ต้องเข้าสู่ระบบก่อนแก้ไขข้อมูล'); return; }
-    await apiSend('/admin-import', { actor: ME.code, action:'legacy_guest_names_update', id, guest_names: input.trim() });
-    r.guest_names = input.trim() || null;
+    await apiSend('/admin-import', { actor: ME.code, action:'legacy_guest_names_update', id, guest_names: value });
+    r.guest_names = value || null;
+    alert('บันทึกรายชื่อผู้เข้าพักแล้ว');
     openModal(id);
   }catch(e){ alert(e.message || 'บันทึกไม่สำเร็จ'); }
 }
@@ -408,9 +417,15 @@ function branchCoverage(branchCode){
 function redrawCoverageTable(){
   const rows = DASH_BRANCHES.map(b=>({ ...b, count: branchCoverage(b.code).length }))
     .sort((a,b)=>a.count-b.count || a.name.localeCompare(b.name));
-  $("#coverageTbody").innerHTML = rows.map(b=>`<tr onclick='openCoverageModal(${JSON.stringify(b.code)})' style="cursor:pointer">
+  const totalPages = Math.max(1, Math.ceil(rows.length/COVERAGE_PAGE_SIZE));
+  COVERAGE_PAGE = Math.min(COVERAGE_PAGE, totalPages-1);
+  const pageRows = rows.slice(COVERAGE_PAGE*COVERAGE_PAGE_SIZE, (COVERAGE_PAGE+1)*COVERAGE_PAGE_SIZE);
+  $("#coverageTbody").innerHTML = pageRows.map(b=>`<tr onclick='openCoverageModal(${JSON.stringify(b.code)})' style="cursor:pointer">
     <td>${esc(b.name)}</td><td>${esc(b.province||'—')}</td>
     <td class="num">${b.count===0?'<span class="fix">0</span>':b.count}</td></tr>`).join("");
+  $("#coveragePager").innerHTML = `<button ${COVERAGE_PAGE===0?'disabled':''} onclick="COVERAGE_PAGE--;redrawCoverageTable()">‹ ก่อนหน้า</button>
+    <span>หน้า ${COVERAGE_PAGE+1}/${totalPages} · ${rows.length} สาขา</span>
+    <button ${COVERAGE_PAGE>=totalPages-1?'disabled':''} onclick="COVERAGE_PAGE++;redrawCoverageTable()">ถัดไป ›</button>`;
 }
 
 function openCoverageModal(branchCode){
