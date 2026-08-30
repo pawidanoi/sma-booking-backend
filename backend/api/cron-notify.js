@@ -5,8 +5,9 @@ const { push, qrPostback, qrUri, liffLink } = require('../lib/line');
 // Two independent stages:
 //   1) work_schedule-based — no booking exists yet, so this has to be keyed off
 //      the job's own date_start/advance_days (unchanged from the original design).
-//   2) bookings-based — the AREA-approval/admin/voucher stages below, keyed off
-//      the booking's own checkin_date (which can differ from the job's date_start).
+//   2) bookings-based — the AREA-picks-a-hotel/owner-approves/hotel-confirmation
+//      stages below, keyed off the booking's own checkin_date (which can differ
+//      from the job's date_start).
 module.exports = async function handler(req, res) {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
@@ -84,13 +85,13 @@ async function runStage1(today) {
   return { sent, results };
 }
 
-// ---------------------------------------------------------------- stages 2-4: AREA approve / admin book / voucher
+// ---------------------------------------------------------------- stages 2-4: AREA picks a hotel / owner approves / hotel confirmation number
 
 async function runBookingStages(today) {
   const { data: bookings } = await supabase
     .from('bookings')
-    .select('id, team_code, branch_code, checkin_date, status, branches(name)')
-    .in('status', ['ส่งคำขอ', 'อนุมัติพื้นที่แล้ว', 'ดำเนินการจอง']);
+    .select('id, team_code, branch_code, checkin_date, status, confirmation_no, branches(name)')
+    .in('status', ['ส่งคำขอ', 'รอเจ้าของอนุมัติ', 'รอเลขยืนยันโรงแรม']);
 
   const { data: assignments } = await supabase.from('area_team_assignments').select('area_employee_code, team_code');
   const areaCodesByTeam = new Map();
@@ -113,47 +114,68 @@ async function runBookingStages(today) {
     const daysUntil = diffDays(today, new Date(b.checkin_date));
     const branchName = b.branches?.name || b.branch_code;
 
-    // Stage 2 — AREA remind, day -4, soft nudge, only while still un-reviewed.
+    // Stage 2 — AREA remind, day -4, soft nudge to pick a hotel (was "approve").
     if (b.status === 'ส่งคำขอ' && daysUntil === 4) {
       const areaCodes = areaCodesByTeam.get(b.team_code) || [];
       const recipients = areaCodes.map((c) => lineIdByEmployee.get(c)).filter(Boolean);
       if (recipients.length) {
         await Promise.all(recipients.map((lineId) => push(lineId, [{
           type: 'text',
-          text: `🔔 อีก 4 วันจะถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้วนะคะ ช่วยตรวจอนุมัติพื้นที่ให้ด้วยนะ 🥭`,
-          quickReply: { items: [qrUri('ตรวจเลย', liffLink('/home'))] }
+          text: `🔔 อีก 4 วันจะถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้วนะคะ ช่วยเลือกที่พักแล้วส่งขออนุมัติให้ด้วยนะ 🥭`,
+          quickReply: { items: [qrUri('เลือกที่พักเลย', liffLink('/home'))] }
         }])));
         sent += recipients.length;
       }
       results.push({ stage: 'area_remind', booking: b.id, recipients: recipients.length });
     }
 
-    // Stage 3 — admin remind, day -3, must complete the Choowap booking.
-    // Soft gate: mentions AREA status but never blocks the reminder or the action.
-    if ((b.status === 'ส่งคำขอ' || b.status === 'อนุมัติพื้นที่แล้ว') && daysUntil === 3) {
-      const note = b.status === 'ส่งคำขอ' ? ' (ยังไม่ได้รับอนุมัติจากพื้นที่)' : '';
+    // Stage 3 — day -3. Still un-picked at this point → escalate the AREA
+    // nudge (harder tone, same recipients as stage 2). Already picked and
+    // waiting on the owner's mandatory final approval → remind the owner
+    // instead (adminLineIds — the "แอดมิน" position is the owner today).
+    if (b.status === 'ส่งคำขอ' && daysUntil === 3) {
+      const areaCodes = areaCodesByTeam.get(b.team_code) || [];
+      const recipients = areaCodes.map((c) => lineIdByEmployee.get(c)).filter(Boolean);
+      if (recipients.length) {
+        await Promise.all(recipients.map((lineId) => push(lineId, [{
+          type: 'text',
+          text: `📣 อีกแค่ 3 วันจะถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้วนะ ยังไม่เห็นเลือกที่พักเลย รีบหน่อยนะคะ 😤🥭`,
+          quickReply: { items: [qrUri('เลือกที่พักเลย', liffLink('/home'))] }
+        }])));
+        sent += recipients.length;
+      }
+      results.push({ stage: 'area_remind_escalate', booking: b.id, recipients: recipients.length });
+    }
+    if (b.status === 'รอเจ้าของอนุมัติ' && daysUntil === 3) {
       if (adminLineIds.length) {
         await Promise.all(adminLineIds.map((lineId) => push(lineId, [{
           type: 'text',
-          text: `📣 อีก 3 วันถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName}${note} รีบเริ่มดำเนินการจองบนชูวับด้วยนะคะ`,
+          text: `📣 อีก 3 วันถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้ว รออนุมัติขั้นสุดท้ายอยู่นะคะ`,
           quickReply: { items: [qrUri('เปิดคิว', liffLink('/home'))] }
         }])));
         sent += adminLineIds.length;
       }
-      results.push({ stage: 'admin_remind', booking: b.id, recipients: adminLineIds.length });
+      results.push({ stage: 'final_approval_remind', booking: b.id, recipients: adminLineIds.length });
     }
 
-    // Stage 4 — voucher remind, day -1/-2, booked but voucher not attached yet.
-    if (b.status === 'ดำเนินการจอง' && (daysUntil === 1 || daysUntil === 2)) {
-      if (adminLineIds.length) {
-        await Promise.all(adminLineIds.map((lineId) => push(lineId, [{
+    // Stage 4 — day -1/-2, approved but no hotel confirmation number yet.
+    // Sent to both AREA (scoped to this booking's team, since they're the
+    // one who typically enters it) and the owner.
+    if (b.status === 'รอเลขยืนยันโรงแรม' && !b.confirmation_no && (daysUntil === 1 || daysUntil === 2)) {
+      const areaCodes = areaCodesByTeam.get(b.team_code) || [];
+      const recipients = [...new Set([
+        ...areaCodes.map((c) => lineIdByEmployee.get(c)).filter(Boolean),
+        ...adminLineIds
+      ])];
+      if (recipients.length) {
+        await Promise.all(recipients.map((lineId) => push(lineId, [{
           type: 'text',
-          text: `🎫 อีก ${daysUntil} วันถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้ว ยังไม่เห็นวอเชอร์แนบเลยนะคะ`,
-          quickReply: { items: [qrUri('แนบวอเชอร์', liffLink('/home'))] }
+          text: `🎫 อีก ${daysUntil} วันถึงวันเข้าพักของทีม ${b.team_code} ที่ ${branchName} แล้ว ยังไม่เห็นเลขยืนยันจากโรงแรมเลยนะคะ`,
+          quickReply: { items: [qrUri('กรอกเลขยืนยัน', liffLink('/home'))] }
         }])));
-        sent += adminLineIds.length;
+        sent += recipients.length;
       }
-      results.push({ stage: 'voucher_remind', booking: b.id, recipients: adminLineIds.length });
+      results.push({ stage: 'confirmation_remind', booking: b.id, recipients: recipients.length });
     }
   }
 

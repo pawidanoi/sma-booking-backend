@@ -229,35 +229,30 @@ async function findEmployeeByLineId(lineUserId) {
   return data;
 }
 
+// The voucher file itself is emailed to the employee directly from outside
+// this system now (no more in-system upload/link) — this just surfaces the
+// hotel confirmation number, the one thing the system still tracks.
 async function replyVoucher(event, employee) {
   const { data: booking } = await supabase
     .from('bookings')
-    .select('id, confirmation_no, voucher_file_url, voucher_storage_path, status, checkin_date, checkout_date')
+    .select('id, confirmation_no, status, checkin_date, checkout_date')
     .eq('created_by_employee', employee.code)
     .eq('status', 'จองสำเร็จ')
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (!booking || (!booking.voucher_file_url && !booking.voucher_storage_path)) {
+  if (!booking || !booking.confirmation_no) {
     await reply(event.replyToken, [
-      { type: 'text', text: 'ยังไม่มีวอเชอร์เลยค่ะตอนนี้ ถ้าเพิ่งจองอาจต้องรอแอดมินดำเนินการก่อนนะคะ ใจเย็นๆ นะ~ 🥭' }
+      { type: 'text', text: 'ยังไม่มีเลขยืนยันการจองเลยค่ะตอนนี้ ถ้าเพิ่งจองอาจต้องรอดำเนินการก่อนนะคะ ใจเย็นๆ นะ~ 🥭' }
     ]);
     return;
   }
 
-  // A directly-uploaded voucher lives in a private Storage bucket with no stable
-  // public URL — route through the redirect endpoint, which mints a fresh signed
-  // URL on each click. A manually-pasted link (voucher_file_url) is already public.
-  const voucherUrl = booking.voucher_storage_path
-    ? `${process.env.PUBLIC_BASE_URL || 'https://sma-booking-backend.vercel.app'}/api/voucher-redirect?booking_id=${encodeURIComponent(booking.id)}`
-    : booking.voucher_file_url;
-
   await reply(event.replyToken, [
     {
       type: 'text',
-      text: `วอเชอร์ล่าสุดมาแล้วค่า! 🎫\nเลขยืนยัน: ${booking.confirmation_no || '-'}\nเข้าพัก: ${booking.checkin_date} – ${booking.checkout_date}\nเก็บไว้ให้ดีนะคะ~`,
-      quickReply: { items: [qrUri('📎 เปิดไฟล์วอเชอร์', voucherUrl)] }
+      text: `จองสำเร็จแล้วค่า! 🎫\nเลขยืนยัน: ${booking.confirmation_no}\nเข้าพัก: ${booking.checkin_date} – ${booking.checkout_date}\nวอเชอร์จะส่งเข้าอีเมลให้แยกต่างหากนะคะ~`
     }
   ]);
 }

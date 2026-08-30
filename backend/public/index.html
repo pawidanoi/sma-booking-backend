@@ -186,7 +186,7 @@ let BRANCHES = [], HOTELS = [], TEAMS = [], STAFF_LIST = [], SCHEDULE = [];
 let STAFF = {}, BRANCH_BY_CODE = {}, PROVINCES = [];
 let BOOKINGS = [];
 let MISSION_TYPES = ["งานแฟร์","งานเปิดสาขา","สำรวจพื้นที่","อื่นๆ"];
-let S = {}, CH = {}, VOUCH = {}, REJ = {}, ADDG = {}, JOINQ = {}, DEP = {};
+let S = {}, CH = {}, CONFIRM = {}, REJ = {}, ADDG = {}, JOINQ = {}, DEP = {};
 let SPARE_LIST = [], DEPCLAIMS = [];
 
 const $ = s => document.querySelector(s);
@@ -396,7 +396,7 @@ function hotelDistanceKm(h,b){
   }
   return null;
 }
-const STATUS_LOG_LABEL = { 'ส่งคำขอ':'ส่งคำขอ', 'อนุมัติพื้นที่แล้ว':'อนุมัติพื้นที่แล้ว', 'ดำเนินการจอง':'ดำเนินการจอง', 'จองสำเร็จ':'จองเสร็จแล้ว', 'ต้องแก้ไข':'ต้องแก้ไข', 'ติดปัญหา':'ติดปัญหา' };
+const STATUS_LOG_LABEL = { 'ส่งคำขอ':'ส่งคำขอ', 'รอเจ้าของอนุมัติ':'รอเจ้าของอนุมัติ', 'รอเลขยืนยันโรงแรม':'รอเลขยืนยันโรงแรม', 'จองสำเร็จ':'จองเสร็จแล้ว', 'ต้องแก้ไข':'ต้องแก้ไข', 'ติดปัญหา':'ติดปัญหา' };
 function statusLogHtml(b){
   if(!b.statusLog || !b.statusLog.length) return '';
   const rows = b.statusLog.map(l=>{
@@ -458,12 +458,13 @@ function normBooking(b){
     status:b.status, rejectReason:b.reject_reason, note:b.note||'',
     missionType:b.mission_type||null, missionNote:b.mission_type_note||null,
     autoApproved:!!b.auto_approved, ruleViolations:b.rule_violations||[],
-    areaApprovedBy:b.area_approved_by||null, areaApprovedAt:b.area_approved_at||null,
+    hotelPickedBy:b.hotel_picked_by||null, hotelPickedAt:b.hotel_picked_at||null,
+    finalApprovedBy:b.final_approved_by||null, finalApprovedAt:b.final_approved_at||null,
     submittedByCode:b.created_by_employee, adhoc: !b.work_schedule_id,
     src: b.team_code==='AREA' ? 'AREA' : 'SMA',
     hotels: choices,
     chosenChoiceId: b.chosen_hotel_choice_id,
-    voucher: b.status==='จองสำเร็จ' || b.confirmation_no ? { code:b.confirmation_no, url:b.voucher_file_url, storagePath:b.voucher_storage_path } : null,
+    confirmationNo: b.confirmation_no || null,
     change: ch ? { id:ch.id, type:ch.type, rooms:ch.new_rooms, newCheckin:ch.new_checkin, newCheckout:ch.new_checkout, note:ch.note } : null,
     joinRequests,
     statusLog: (b.booking_status_log||[]).slice().sort((x,y)=>new Date(x.changed_at)-new Date(y.changed_at)),
@@ -494,8 +495,8 @@ function pillOf(b){
   if(b.status==='ต้องแก้ไข') return '<span class="pill soon">ต้องแก้ไข</span>';
   if(b.status==='จองสำเร็จ') return '<span class="pill ok">จองเสร็จแล้ว</span>';
   if(b.status==='ติดปัญหา') return '<span class="pill soon">ติดปัญหา</span>';
-  if(b.status==='ดำเนินการจอง') return '<span class="pill wait">ดำเนินการจอง</span>';
-  if(b.status==='อนุมัติพื้นที่แล้ว') return '<span class="pill ok">อนุมัติพื้นที่แล้ว</span>';
+  if(b.status==='รอเลขยืนยันโรงแรม') return '<span class="pill wait">รอเลขยืนยันโรงแรม</span>';
+  if(b.status==='รอเจ้าของอนุมัติ') return '<span class="pill ok">รอเจ้าของอนุมัติ</span>';
   return '<span class="pill wait">ส่งคำขอ</span>';
 }
 
@@ -1186,21 +1187,20 @@ function renderStatus(id){
     <div class="label" style="color:var(--danger)">⚠️ แอดมินส่งกลับให้แก้ไข</div>
     <div style="font-size:13.5px;font-weight:600;margin-bottom:10px">${esc(b.rejectReason||'กรุณาตรวจสอบข้อมูลอีกครั้ง')}</div>
     <button class="btn" onclick="openFormEdit('${b.id}')">แก้ไขคำขอ</button></div>` : '';
-  const voucherLink = b.voucher && (b.voucher.storagePath ? ('/api/voucher-redirect?booking_id='+encodeURIComponent(b.id)) : b.voucher.url);
-  const voucherBox = (b.status==='จองสำเร็จ' && b.voucher) ? `<div class="card"><div class="label">วอเชอร์เข้าพัก</div>
-    <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc(b.voucher.code||'—')}</span></div>
-    ${voucherLink?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(voucherLink)}" target="_blank" rel="noopener">เปิดวอเชอร์</a></span></div>`:''}</div>` : '';
-  const order=['ส่งคำขอ','อนุมัติพื้นที่แล้ว','ดำเนินการจอง','จองสำเร็จ'];
-  const labels={'ส่งคำขอ':'ส่งคำขอ','อนุมัติพื้นที่แล้ว':'อนุมัติพื้นที่แล้ว','ดำเนินการจอง':'ดำเนินการจอง','จองสำเร็จ':'จองเสร็จแล้ว'};
+  const voucherBox = (b.status==='จองสำเร็จ' && b.confirmationNo) ? `<div class="card"><div class="label">ยืนยันการจองแล้ว</div>
+    <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc(b.confirmationNo)}</span></div>
+    <div class="hint" style="margin-top:6px">วอเชอร์จะส่งเข้าอีเมลให้แยกต่างหากนะคะ</div></div>` : '';
+  const order=['ส่งคำขอ','รอเจ้าของอนุมัติ','รอเลขยืนยันโรงแรม','จองสำเร็จ'];
+  const labels={'ส่งคำขอ':'ส่งคำขอ','รอเจ้าของอนุมัติ':'รอเจ้าของอนุมัติ','รอเลขยืนยันโรงแรม':'รอเลขยืนยันโรงแรม','จองสำเร็จ':'จองเสร็จแล้ว'};
   const curIdx=(b.status==='ต้องแก้ไข'||b.status==='ติดปัญหา')?-1:order.indexOf(b.status);
   const tl=order.map((t,i)=>`<li class="${i<curIdx?'done':(i===curIdx?'now':'dim')}"><div class="dot"></div><div><div class="tt">${labels[t]}</div></div></li>`).join("");
-  const canChange=b.status!=='ส่งคำขอ' && b.status!=='ต้องแก้ไข' && b.status!=='อนุมัติพื้นที่แล้ว';
+  const canChange=b.status!=='ส่งคำขอ' && b.status!=='ต้องแก้ไข' && b.status!=='รอเจ้าของอนุมัติ';
   const chips = canChange ? `<div class="chips">
       <div class="chip" onclick="renderChange('ลดจำนวนห้อง','${b.id}')">🛏️ ขอลดห้อง</div>
       <div class="chip" onclick="renderChange('ลดจำนวนคืน','${b.id}')">📅 ขอลดคืน</div>
       <div class="chip" onclick="renderChange('ขอย้ายที่พัก','${b.id}')">🔁 ขอย้ายที่พัก</div>
       <div class="chip" onclick="renderChange('ยกเลิกการจอง','${b.id}')">✖️ ขอยกเลิก</div></div>`
-    : `<div class="hint">รอแอดมินเริ่มดำเนินการจองก่อน ถึงจะขอเปลี่ยนแปลงได้</div>`;
+    : `<div class="hint">รอเลือกที่พักและอนุมัติก่อน ถึงจะขอเปลี่ยนแปลงได้</div>`;
   const d=b.derived||{};
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="goHome()">‹</span><h1>สถานะการจอง</h1></div>
    <div class="body">
@@ -1262,7 +1262,7 @@ async function applyChange(){
 
 /* ================= แอดมิน ================= */
 function renderAdminQueue(){
-  const order={'ส่งคำขอ':0,'อนุมัติพื้นที่แล้ว':1,'ดำเนินการจอง':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
+  const order={'ส่งคำขอ':0,'รอเจ้าของอนุมัติ':1,'รอเลขยืนยันโรงแรม':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
   const sorted=BOOKINGS.slice().sort((a,b)=>{
     const aFlag=a.change||(a.joinRequests&&a.joinRequests.length), bFlag=b.change||(b.joinRequests&&b.joinRequests.length);
     if(aFlag && !bFlag) return -1;
@@ -1281,7 +1281,8 @@ function renderAdminQueue(){
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
       <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${autoBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
-  const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ'||b.status==='อนุมัติพื้นที่แล้ว').length;
+  const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ').length;
+  const awaitingMe=BOOKINGS.filter(b=>b.status==='รอเจ้าของอนุมัติ').length;
   const flagged=BOOKINGS.filter(b=>b.change).length;
   const adminNav = `<div class="adminnav">
     <div class="grp"><div class="grp-label">ต้องทำตอนนี้</div><div class="chips">
@@ -1306,11 +1307,12 @@ function renderAdminQueue(){
     <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div></div>
    <div class="body">${adminNav}
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
-     <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอตรวจ</div></div>
+     <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอเลือกที่พัก</div></div>
+     <div><div class="val" style="color:var(--brand2)">${awaitingMe}</div><div class="label" style="margin:0">รอฉันอนุมัติ</div></div>
      <div><div class="val" style="color:var(--danger)">${flagged}</div><div class="label" style="margin:0">มีเรื่องแจ้ง</div></div>
      <div><div class="val" style="color:var(--success)">${BOOKINGS.filter(b=>b.status==='จองสำเร็จ').length}</div><div class="label" style="margin:0">จองเสร็จ</div></div>
     </div></div>
-    <div class="hint">ตรวจผังห้อง + ก็อปรหัส/ชื่อ/เบอร์ไปจองบนชูวับ</div>
+    <div class="hint">ตรวจผังห้อง + เลือกที่พักเอง หรืออนุมัติงานที่ AREA เลือกที่พักให้แล้ว</div>
     ${rows||'<div class="hint">ยังไม่มีคำขอเข้ามา</div>'}</div></div>`;
 }
 
@@ -1323,16 +1325,22 @@ async function adminAction(bookingId, action, extra, okMsg, after){
   }catch(e){ toast(e.message); }
 }
 function chooseHotel(id,choiceId){ adminAction(id,'choose_hotel',{ choice_id:choiceId },null); }
-// Two-tap confirm — this used to be one unconfirmed tap while the *less*
-// destructive reject action required a full second screen and a typed
-// reason, exactly backwards. Same pattern as deleteScheduleConfirm().
-function areaApprove(id,btn){
+// Replaces the old start_processing — AREA (or the owner, bypassing AREA)
+// has picked a hotel via chooseHotel above and routes it to the owner's
+// mandatory final approval. One-tap, since the server already refuses this
+// without a chosen hotel — nothing destructive to confirm.
+function submitForApproval(id){ adminAction(id,'submit_for_approval',null,'ส่งขออนุมัติแล้ว ✓',()=>rerender(IS_AREA_APPROVER?renderAreaQueue:renderAdminQueue)); }
+// Two-tap confirm — this is the actual commitment point in the new flow
+// (every booking must pass through here, no exceptions), so it keeps the
+// confirm ceremony the old area-approval step used to have. Same pattern as
+// deleteScheduleConfirm().
+function finalApprove(id,btn){
   if(btn && btn.dataset.confirm!=='1'){
     btn.dataset.confirm='1';
-    btn.textContent='แน่ใจนะ? กดอีกครั้งเพื่ออนุมัติ';
+    btn.textContent='แน่ใจนะ? กดอีกครั้งเพื่ออนุมัติขั้นสุดท้าย';
     return;
   }
-  adminAction(id,'area_approve',null,'อนุมัติพื้นที่แล้ว ✓',()=>rerender(renderAreaQueue));
+  adminAction(id,'final_approve',null,'อนุมัติขั้นสุดท้ายแล้ว ✓',()=>rerender(renderAdminQueue));
 }
 function markHotelUnavailable(id,choiceId){ adminAction(id,'mark_hotel_unavailable',{ choice_id:choiceId },'บันทึกว่าที่พักนี้จองไม่ได้ — ดูที่พักที่แนะนำเพิ่มด้านล่าง'); }
 function addHotelChoiceForBooking(id,hotelCode){
@@ -1340,7 +1348,6 @@ function addHotelChoiceForBooking(id,hotelCode){
   if(!hotelId){ toast('ไม่พบที่พักนี้ในทะเบียน'); return; }
   adminAction(id,'add_hotel_choice',{ hotel_id:hotelId },'เลือกที่พักนี้แทนแล้ว ✓');
 }
-function startProcessing(id){ adminAction(id,'start_processing',null,'เริ่มดำเนินการจองแล้ว'); }
 function markProblem(id){ adminAction(id,'mark_problem',null,'บันทึกว่าติดปัญหา — แจ้งพนักงานหาที่ใหม่'); }
 function acceptChange(id,changeId){ adminAction(id,'accept_change',{ change_id:changeId },'รับเรื่องแล้ว — ปรับการจองเรียบร้อย'); }
 function dismissChange(id,changeId){ adminAction(id,'dismiss_change',{ change_id:changeId },'เก็บการจองไว้ตามเดิม'); }
@@ -1635,9 +1642,10 @@ async function saveAreaAssignment(code, btn){
 
 /* ================= ต้องรีบดูตอนนี้ — รวม 3 จุดเสี่ยงไว้จอเดียว ================= */
 const URGENT_TYPE_INFO = {
-  not_booked:      { label:'พนักงานยังไม่จอง',      cls:'soon' },
-  awaiting_area:   { label:'รอ AREA อนุมัติ',        cls:'soon' },
-  missing_voucher: { label:'ยังไม่แนบวอเชอร์',       cls:'soon' }
+  not_booked:              { label:'พนักงานยังไม่จอง',        cls:'soon' },
+  awaiting_area:           { label:'AREA ยังไม่เลือกที่พัก',   cls:'soon' },
+  awaiting_final_approval: { label:'รอเจ้าของอนุมัติ',         cls:'soon' },
+  missing_confirmation:    { label:'ยังไม่มีเลขยืนยันโรงแรม',  cls:'soon' }
 };
 function urgentDaysTag(d){
   if(d<0) return `<span class="pill soon">เลยกำหนด ${-d} วัน</span>`;
@@ -1669,7 +1677,7 @@ async function renderUrgentNow(){
     $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
       <div style="flex:1"><h1>🔥 ต้องรีบดูตอนนี้</h1><span class="sub">${items.length} รายการ</span></div></div>
      <div class="body">
-      <div class="hint">รวมงานที่ยังไม่จอง, คำขอที่รอ AREA อนุมัติ, และการจองที่ใกล้เข้าพักแล้วแต่ยังไม่แนบวอเชอร์ — เรียงจากด่วนสุดก่อน</div>
+      <div class="hint">รวมงานที่ยังไม่จอง, คำขอที่ AREA ยังไม่เลือกที่พัก, คำขอที่รอเจ้าของอนุมัติ, และการจองที่ใกล้เข้าพักแล้วแต่ยังไม่มีเลขยืนยันจากโรงแรม — เรียงจากด่วนสุดก่อน</div>
       ${rows||'<div class="hint">ตอนนี้ไม่มีอะไรด่วนเลยค่ะ 🎉</div>'}
      </div></div>`;
   }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
@@ -1686,11 +1694,13 @@ async function renderCycleTime(){
      <div class="body">
       <div class="hint">คำนวณจากประวัติการเปลี่ยนสถานะจริงของทุกการจอง</div>
       <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
-       <div><div class="val" style="color:var(--amber)">${d.area_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ย AREA อนุมัติ</div></div>
-       <div><div class="val" style="color:var(--brand)">${d.admin_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยแอดมินเริ่มจอง</div></div>
+       <div><div class="val" style="color:var(--amber)">${d.area_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ย AREA เลือกที่พัก</div></div>
+       <div><div class="val" style="color:var(--brand)">${d.admin_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยเจ้าของอนุมัติ</div></div>
+       <div><div class="val" style="color:var(--success)">${d.confirm_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยได้เลขยืนยัน</div></div>
       </div></div>
-      <div class="card"><div class="label">แยกตาม AREA ที่อนุมัติ</div>${rowsOf(d.area_by_approver||[])}</div>
-      <div class="card"><div class="label">แยกตามแอดมินที่เริ่มจอง</div>${rowsOf(d.admin_by_person||[])}</div>
+      <div class="card"><div class="label">แยกตามคนที่เลือกที่พัก</div>${rowsOf(d.area_by_approver||[])}</div>
+      <div class="card"><div class="label">แยกตามคนที่อนุมัติขั้นสุดท้าย</div>${rowsOf(d.admin_by_person||[])}</div>
+      <div class="card"><div class="label">แยกตามคนที่กรอกเลขยืนยัน</div>${rowsOf(d.confirm_by_person||[])}</div>
      </div></div>`;
   }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
 }
@@ -1798,14 +1808,14 @@ async function saveEmployeeEdit(code){
 }
 
 const SCHEDULE_STAGE_INFO = {
-  not_booked:      { label:'พนักงานยังไม่จอง',        cls:'wait' },
-  awaiting_area:   { label:'รอ AREA อนุมัติ',          cls:'wait' },
-  awaiting_admin:  { label:'อนุมัติพื้นที่แล้ว — รอแอดมิน', cls:'ok' },
-  admin_processing:{ label:'แอดมินกำลังจอง',           cls:'ok' },
-  done:            { label:'จองสำเร็จ',                cls:'ok' },
-  needs_fix:       { label:'ต้องแก้ไข',                cls:'soon' },
-  problem:         { label:'ติดปัญหา',                 cls:'soon' },
-  unknown:         { label:'ไม่ทราบสถานะ',             cls:'wait' }
+  not_booked:      { label:'พนักงานยังไม่จอง',            cls:'wait' },
+  awaiting_area:   { label:'AREA ยังไม่เลือกที่พัก',       cls:'wait' },
+  awaiting_admin:  { label:'AREA เลือกที่พักแล้ว — รอเจ้าของอนุมัติ', cls:'ok' },
+  admin_processing:{ label:'เจ้าของอนุมัติแล้ว — รอเลขยืนยันโรงแรม', cls:'ok' },
+  done:            { label:'จองสำเร็จ',                    cls:'ok' },
+  needs_fix:       { label:'ต้องแก้ไข',                    cls:'soon' },
+  problem:         { label:'ติดปัญหา',                     cls:'soon' },
+  unknown:         { label:'ไม่ทราบสถานะ',                 cls:'wait' }
 };
 
 async function renderScheduleFlow(){
@@ -2039,7 +2049,9 @@ function renderCheckedIn(){
 }
 
 function renderReject(id, opts){
-  opts = opts || { action:'reject', backOnclick:`renderAdminDetail('${esc(id)}')`, afterTo:renderAdminQueue, title:'ส่งกลับให้แก้ไข' };
+  // reject is now the one unified action for both roles (AREA and admin) —
+  // only the "where to land after" destination differs by who's using it.
+  opts = opts || { action:'reject', backOnclick:`renderAdminDetail('${esc(id)}')`, afterTo:(IS_AREA_APPROVER?renderAreaQueue:renderAdminQueue), title:'ส่งกลับให้แก้ไข' };
   REJ={ id, reason:'', busy:false, opts };
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="${opts.backOnclick}">‹</span><h1>${esc(opts.title)}</h1></div>
    <div class="body"><div class="card"><div class="label">เหตุผลที่ส่งกลับให้พนักงานแก้ไข</div>
@@ -2055,10 +2067,10 @@ async function confirmReject(){
     setTimeout(REJ.opts.afterTo,400);
   }catch(e){ toast(e.message); }
 }
-function areaReject(id){ renderReject(id, { action:'area_reject', backOnclick:`renderAreaDetail('${esc(id)}')`, afterTo:renderAreaQueue, title:'ส่งกลับให้แก้ไข (พื้นที่)' }); }
-
 function renderAdminDetail(id){
-  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); renderAdminQueue(); return; }
+  const backFn = IS_AREA_APPROVER ? renderAreaQueue : renderAdminQueue;
+  const backFnName = IS_AREA_APPROVER ? 'renderAreaQueue' : 'renderAdminQueue';
+  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); backFn(); return; }
   const guests=bookingGuestList(id);
   const rooms=pair(guests);
   const nights=daysBetween(b.checkin,b.checkout)||1;
@@ -2126,7 +2138,9 @@ function renderAdminDetail(id){
   const changeBox = !b.change ? '' : (b.change.type==='ยกเลิกการจอง'
     ? `<div class="card" style="border-color:var(--danger)"><div class="label" style="color:var(--danger)">⚠️ พนักงานขอยกเลิกการจองนี้</div>
         <div style="font-size:13.5px;font-weight:600;margin-bottom:6px">${b.change.note?('เหตุผล: '+esc(b.change.note)):'ไม่ระบุเหตุผล'}</div>
-        <button class="btn danger" onclick="deleteBooking('${b.id}')">ยืนยันยกเลิก — ลบการจองนี้</button>
+        ${IS_ADMIN
+          ? `<button class="btn danger" onclick="deleteBooking('${b.id}')">ยืนยันยกเลิก — ลบการจองนี้</button>`
+          : `<div class="hint">การลบถาวรต้องให้เจ้าของระบบเป็นคนยืนยันเท่านั้น</div>`}
         <button class="btn ghost" style="margin-top:8px" onclick="dismissChange('${b.id}','${b.change.id}')">ไม่ยกเลิก — เก็บไว้</button></div>`
     : `<div class="card" style="border-color:var(--danger)"><div class="label" style="color:var(--danger)">⚠️ เรื่องแจ้งจากพนักงาน</div>
         <div style="font-size:13.5px;font-weight:600">${esc(b.change.type)}${b.change.rooms?': '+b.change.rooms+' ห้อง':''}${b.change.newCheckin?': '+fmtDate(b.change.newCheckin)+' – '+fmtDate(b.change.newCheckout):''}${b.change.note?' — '+esc(b.change.note):''}</div>
@@ -2138,25 +2152,33 @@ function renderAdminDetail(id){
     <button class="btn ghost" style="margin-top:8px" onclick="rejectJoin('${b.id}','${jr.id}')">ไม่อนุมัติ</button></div>`).join("");
   const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
   const approvalBanner = b.autoApproved
-    ? `<div class="warn g">✓ ผ่านกฎอัตโนมัติ (ข้อมูลอ้างอิง — ยังต้องผ่านอนุมัติพื้นที่/แอดมินตามปกติ)</div>`
+    ? `<div class="warn g">✓ ผ่านกฎอัตโนมัติ (ข้อมูลอ้างอิง — ยังต้องผ่านอนุมัติตามปกติ)</div>`
     : (b.ruleViolations&&b.ruleViolations.length ? `<div class="warn a">⚠️ ไม่ผ่านอนุมัติอัตโนมัติ: ${b.ruleViolations.map(esc).join(' · ')}</div>` : '');
-  const areaBanner = b.areaApprovedAt
-    ? `<div class="warn g">✓ อนุมัติพื้นที่แล้ว โดย ${esc(b.areaApprovedBy||'')}</div>`
-    : (b.status==='ส่งคำขอ' ? `<div class="warn a">⚠️ ยังไม่ได้รับอนุมัติจากพื้นที่ — กดเริ่มดำเนินการจองได้ตามปกติถ้าจำเป็น</div>` : '');
-  const adminVoucherLink = b.voucher && (b.voucher.storagePath ? ('/api/voucher-redirect?booking_id='+encodeURIComponent(b.id)) : b.voucher.url);
-  const voucherShown = b.status==='จองสำเร็จ' ? `<div class="card"><div class="label">วอเชอร์ที่ส่งแล้ว</div>
-     <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc((b.voucher&&b.voucher.code)||'—')}</span></div>
-     ${adminVoucherLink?`<div class="copyrow"><span class="k">ไฟล์</span><span class="v"><a href="${esc(adminVoucherLink)}" target="_blank" rel="noopener">เปิด</a></span></div>`:''}</div>` : '';
-  const actions = (b.status==='ส่งคำขอ'||b.status==='อนุมัติพื้นที่แล้ว')
-    ? `<button class="btn" onclick="startProcessing('${b.id}')">เริ่มดำเนินการจอง</button>
+  const areaBanner = b.finalApprovedAt
+    ? `<div class="warn g">✓ เจ้าของอนุมัติขั้นสุดท้ายแล้ว โดย ${esc(b.finalApprovedBy||'')}</div>`
+    : (b.hotelPickedAt
+      ? `<div class="warn a">⚠️ เลือกที่พักแล้ว โดย ${esc(b.hotelPickedBy||'')} — รอเจ้าของอนุมัติขั้นสุดท้าย</div>`
+      : (b.status==='ส่งคำขอ' ? `<div class="warn a">⚠️ ยังไม่ได้เลือกที่พัก — เลือกแล้วกด "ส่งขออนุมัติ" ด้านล่างได้เลย</div>` : ''));
+  const confirmShown = b.confirmationNo ? `<div class="card"><div class="label">ยืนยันการจองแล้ว</div>
+     <div class="copyrow"><span class="k">เลขยืนยัน</span><span class="v">${esc(b.confirmationNo)}</span></div></div>` : '';
+  const actions = (b.status==='ส่งคำขอ')
+    ? `<button class="btn" onclick="submitForApproval('${b.id}')">ส่งขออนุมัติ</button>
+       ${IS_ADMIN && b.chosenChoiceId ? `<button class="btn ghost" style="margin-top:8px" onclick="finalApprove('${b.id}',this)">อนุมัติเอง (ข้าม AREA)</button>` : ''}
+       <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
+    : (b.status==='รอเจ้าของอนุมัติ')
+    ? (IS_ADMIN
+      ? `<button class="btn" onclick="finalApprove('${b.id}',this)">อนุมัติขั้นสุดท้าย</button>
+         <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
+      : `<div class="hint">ส่งขออนุมัติแล้ว รอเจ้าของระบบอนุมัติขั้นสุดท้าย</div>`)
+    : (b.status==='รอเลขยืนยันโรงแรม')
+    ? `<button class="btn" onclick="renderConfirmBooking('${b.id}')">กรอกเลขยืนยันจากโรงแรม</button>
+       <button class="btn ghost" style="margin-top:8px" onclick="markProblem('${b.id}')">จองไม่ได้ — ติดปัญหา</button>
        <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
     : (b.status==='จองสำเร็จ'
-      ? `<button class="btn ghost" onclick="renderVoucher('${b.id}')">แก้ไขวอเชอร์</button>`
-      : `<button class="btn" onclick="renderVoucher('${b.id}')">จองเสร็จแล้ว — แนบวอเชอร์</button>
-         <button class="btn ghost" style="margin-top:8px" onclick="markProblem('${b.id}')">จองไม่ได้ — ติดปัญหา</button>
-         <button class="btn danger" style="margin-top:8px" onclick="renderReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`);
+      ? `<button class="btn ghost" onclick="renderConfirmBooking('${b.id}')">แก้ไขเลขยืนยัน</button>`
+      : '');
   const copyAll = guests.map(g=>`${g.code||'-'} ${g.name}`).join('\n');
-  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span>
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="${backFnName}()">‹</span>
     <div style="flex:1"><h1>ตรวจก่อนจอง</h1><span class="sub">${esc(b.team)} · ${esc(b.branch)}</span></div></div>
    <div class="body">
     <div class="card"><div class="label">สรุปคำขอ${b.adhoc?' · <span class="pill wait">จองเพิ่ม (นอกแผนงาน)</span>':''}</div>
@@ -2168,7 +2190,8 @@ function renderAdminDetail(id){
      <div class="copyrow"><span class="k">ห้อง</span><span class="v">${rooms.length} ห้อง</span></div>
      <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
      ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
-     ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
+     ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}
+     <div class="copyall" role="button" tabindex="0" onclick="copySummary('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();copySummary('${b.id}')}" style="margin-top:8px">📋 ก็อบข้อมูล (วาง LINE/โทรจองกับที่พัก)</div></div>
     ${rejectBanner}${approvalBanner}${areaBanner}${changeBox}${joinBox}
     <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
      <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
@@ -2180,113 +2203,44 @@ function renderAdminDetail(id){
     <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้ — เลือกอันที่จองได้จริง</div>${hotelRadios}
      ${chosen?`<div class="hint" style="margin-top:8px">ประมาณการรวม ~${cost.toLocaleString()}฿ (${nights} คืน × ${rooms.length} ห้อง)</div>`:'<div class="hint">ยังไม่ได้เลือกที่พักที่จะจอง</div>'}</div>
     ${altCard}
-    ${voucherShown}
+    ${confirmShown}
     ${statusLogHtml(b)}
     <div class="stickyactions">${actions}</div></div></div>`;
   renderAdminMap(b, suggestions);
 }
 
-/* ================= ผู้ตรวจอนุมัติพื้นที่ (AREA) ================= */
+/* ================= AREA — เลือกที่พัก/จองให้ทีมที่ดูแล ================= */
 // BOOKINGS is already server-filtered to this approver's assigned teams
-// (scope=area in reloadBookings), so this queue is just renderAdminQueue's
-// list-card pattern reused as-is with a narrower title and no admin-only links.
+// (scope=area in reloadBookings). AREA now does the actual booking work
+// (choose a hotel, copy the summary to call/LINE the hotel, submit for the
+// owner's approval, enter the confirmation number once the hotel confirms)
+// — so this reuses renderAdminDetail() itself, same as the admin queue does.
 function renderAreaQueue(){
-  const order={'ส่งคำขอ':0,'อนุมัติพื้นที่แล้ว':1,'ดำเนินการจอง':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
+  const order={'ส่งคำขอ':0,'รอเจ้าของอนุมัติ':1,'รอเลขยืนยันโรงแรม':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
   const pending = BOOKINGS.filter(b=>b.status==='ส่งคำขอ');
   const sorted=BOOKINGS.slice().sort((a,b)=>(order[a.status]??9)-(order[b.status]??9));
   const rows=sorted.map(b=>{
     const d=b.derived||{};
-    return `<div class="job" role="button" tabindex="0" onclick="renderAreaDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAreaDetail('${b.id}')}">
+    return `<div class="job" role="button" tabindex="0" onclick="renderAdminDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAdminDetail('${b.id}')}">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
       <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
   $("#app").innerHTML=`<div class="screen"><div class="appbar">
-    <div style="flex:1"><h1>รอตรวจอนุมัติพื้นที่</h1><span class="sub">${esc(nickOf(ME))} · ${BOOKINGS.length} รายการ</span></div></div>
+    <div style="flex:1"><h1>งานที่ต้องจอง</h1><span class="sub">${esc(nickOf(ME))} · ${BOOKINGS.length} รายการ</span></div></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
-     <div><div class="val" style="color:var(--amber)">${pending.length}</div><div class="label" style="margin:0">รอตรวจ</div></div>
-     <div><div class="val" style="color:var(--success)">${BOOKINGS.length-pending.length}</div><div class="label" style="margin:0">ผ่านไปแล้ว</div></div>
+     <div><div class="val" style="color:var(--amber)">${pending.length}</div><div class="label" style="margin:0">รอเลือกที่พัก</div></div>
+     <div><div class="val" style="color:var(--success)">${BOOKINGS.length-pending.length}</div><div class="label" style="margin:0">ส่งต่อแล้ว</div></div>
     </div></div>
-    <div class="hint">ตรวจสอบความถูกต้องของพนักงานที่จะเข้าพัก ก่อนส่งต่อให้แอดมินจองจริง</div>
-    ${rows||'<div class="hint">ยังไม่มีคำขอรอตรวจ</div>'}
+    <div class="hint">เลือกที่พัก ก็อบข้อมูลไปจองกับโรงแรม แล้วส่งขออนุมัติจากเจ้าของระบบ</div>
+    ${rows||'<div class="hint">ยังไม่มีคำขอเข้ามา</div>'}
     <a class="navlink" onclick="renderAreaPendingSchedule()">ดูงานของทีมที่ดูแล — ค้างจองอะไรบ้าง</a>
     <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
    </div></div>`;
 }
 
-function renderAreaDetail(id){
-  const b=findB(id); if(!b){ toast('ไม่พบการจองนี้'); renderAreaQueue(); return; }
-  const guests=bookingGuestList(id);
-  const rooms=pair(guests);
-  const nights=daysBetween(b.checkin,b.checkout)||1;
-  const hasBCoords = hasBranchCoords(b);
-  const hotelsWithDist = b.hotels.map(h => Object.assign({}, h, { _km: hotelDistanceKm(h,b) }));
-  const hotelSubtitle = h => h._km!=null ? `ห่างจากสาขา ~${h._km.toFixed(1)} กม.`
-    : h.custom ? 'ไม่มีข้อมูลระยะทาง' : esc(h.near||'-');
-  const rc=rooms.map((r,k)=>{
-    const nm=r.p.map(p=>esc(p.name||'(ไม่ระบุชื่อ)')).join(", ");
-    const e=r.p.length<2?`<div class="empty">+ ว่าง 1 เตียง</div>`:"";
-    return `<div class="room ${r.g}"><div class="rh"><span>ห้อง ${k+1}</span><span>${r.g==='f'?'หญิง':'ชาย'}</span></div><div class="oc">${nm}</div>${e}</div>`;
-  }).join("");
-  const guestRows=guests.map(g=>`<div class="guestcard">
-    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="gt ${g.g}">${g.g==='f'?'ญ':'ช'}</span><strong style="font-size:12px">${esc(g.team||'')}</strong></div>
-    <div class="copyrow"><span class="k">รหัส</span><span class="v">${esc(g.code||'—')}</span></div>
-    <div class="copyrow"><span class="k">ชื่อจริง</span><span class="v">${esc(g.name||'—')} ${guestHomeDistanceTag(g,b)}</span></div>
-    <div class="copyrow"><span class="k">เบอร์</span><span class="v">${esc(g.phone||'—')}</span></div>
-   </div>`).join("");
-  // Read-only — picking/marking-unavailable a hotel is the admin's job, AREA
-  // only needs to see the branch<->hotel distance to judge the roster.
-  const hotelRows=hotelsWithDist.map(h=>{
-    const provTag = h.prov && h.prov!==b.prov ? ` · จ.${esc(h.prov)}` : '';
-    const strike = h.unavailable ? 'text-decoration:line-through;opacity:.55' : '';
-    const fixLink = (h.custom && h._km==null && !h.unavailable) ? ` <a onclick="event.stopPropagation();promptUpdateHotelLink('${esc(h.id)}','${esc(b.id)}',true)" style="color:var(--brand);cursor:pointer;font-weight:700;text-decoration:none">+ เพิ่มลิงก์</a>` : '';
-    return `<div class="hotel radio ${b.chosenChoiceId===h.id?'sel':''}">
-      <div class="chk">${b.chosenChoiceId===h.id?'✓':''}</div>
-      <div class="n"><div class="t" style="${strike}">${esc(h.name)}</div><div class="s">${h.unavailable?'จองไม่ได้ (เต็ม)':hotelSubtitle(h)}${provTag}${fixLink} ${mapLinkBtn(h.map)}</div></div>
-      <div class="p">${h.price!=null?h.price+'฿':'—'}</div></div>`;
-  }).join("");
-  const mapCard = (hasBCoords || hotelsWithDist.some(h=>h.lat!=null)) ? `<div class="card" style="padding:10px">
-    <div class="label" style="margin-bottom:8px">แผนที่ตำแหน่ง</div>
-    <div id="adminMap" style="height:220px;border-radius:10px;overflow:hidden;background:var(--paper)"></div>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--muted)">
-      ${hasBCoords?`<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--brand);margin-right:4px"></span>สาขา</span>`:''}
-      <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);margin-right:4px"></span>ที่พักที่เลือกไว้</span>
-    </div></div>` : '';
-  const rejectBanner = b.status==='ต้องแก้ไข'? `<div class="warn a">✍️ ส่งกลับแล้ว รอพนักงานแก้ไข: ${esc(b.rejectReason||'')}</div>`:'';
-  // Reuses the same rule_violations text the admin screen shows — the
-  // home-distance-rule figure (บ้าน↔สาขา) already lives there when it's
-  // close enough to matter, which is exactly the case AREA most needs flagged.
-  const ruleBanner = (b.ruleViolations&&b.ruleViolations.length) ? `<div class="warn a">⚠️ ${b.ruleViolations.map(esc).join(' · ')}</div>` : '';
-  const areaBanner = b.areaApprovedAt ? `<div class="warn g">✓ อนุมัติพื้นที่แล้ว โดย ${esc(b.areaApprovedBy||'')}</div>` : '';
-  const actions = b.status==='ส่งคำขอ'
-    ? `<button class="btn" onclick="areaApprove('${b.id}',this)">อนุมัติ — ส่งต่อให้แอดมินจอง</button>
-       <button class="btn danger" style="margin-top:8px" onclick="areaReject('${b.id}')">ส่งกลับให้พนักงานแก้ไข</button>`
-    : '';
-  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAreaQueue()">‹</span>
-    <div style="flex:1"><h1>ตรวจอนุมัติพื้นที่</h1><span class="sub">${esc(b.team)} · ${esc(b.branch)}</span></div></div>
-   <div class="body">
-    <div class="card"><div class="label">สรุปคำขอ${b.adhoc?' · <span class="pill wait">จองเพิ่ม (นอกแผนงาน)</span>':''}</div>
-     <div class="copyrow"><span class="k">เลขที่</span><span class="v">${esc(b.id)}</span></div>
-     <div class="copyrow"><span class="k">ทีม</span><span class="v">${esc(b.team)}</span></div>
-     <div class="copyrow"><span class="k">สาขา</span><span class="v">${esc(b.branch)}${b.prov?' · จ.'+esc(b.prov):''}</span></div>
-     <div class="copyrow"><span class="k">เช็คอิน–เอาท์</span><span class="v">${fmtDate(b.checkin)} – ${fmtDate(b.checkout)} (${nights} คืน)</span></div>
-     <div class="copyrow"><span class="k">ห้อง</span><span class="v">${rooms.length} ห้อง</span></div>
-     <div class="copyrow"><span class="k">ผู้เข้าพัก</span><span class="v">${guests.length} คน</span></div>
-     ${b.adhoc && b.missionType?`<div class="copyrow"><span class="k">ภารกิจ</span><span class="v">${esc(b.missionType)}${b.missionType==='อื่นๆ'&&b.missionNote?' — '+esc(b.missionNote):''}</span></div>`:''}
-     ${b.note?`<div class="copyrow"><span class="k">หมายเหตุ</span><span class="v">${esc(b.note)}</span></div>`:''}</div>
-    ${rejectBanner}${ruleBanner}${areaBanner}
-    <div class="card"><div class="label">ผังห้อง — ตรวจว่าไม่มีชายปนหญิง</div>
-     <div class="warn g">🛏️ แยกหญิง/ชายจาก ${guests.length} คน → ${rooms.length} ห้อง</div>
-     <div class="roomgrid">${rc}</div></div>
-    <div class="card"><div class="label">รหัส · ชื่อ · เบอร์</div>${guestRows}</div>
-    ${mapCard}
-    <div class="card"><div class="label">ที่พักที่พนักงานเลือกไว้</div>${hotelRows}</div>
-    ${statusLogHtml(b)}
-    <div class="stickyactions">${actions}</div></div></div>`;
-  renderAdminMap(b, []);
-}
 
 function copyTxt(t){
   if(!t){ toast('ไม่มีข้อมูลให้คัดลอก'); return; }
@@ -2300,56 +2254,52 @@ function copyTxt(t){
   }
 }
 
-function renderVoucher(id){
+// Plain-text summary for "ก็อบข้อมูล" — paste into LINE, or read over the
+// phone while calling the hotel. Not a file export, just clipboard text via
+// the copyTxt() fallback above (works inside LINE's in-app browser too).
+function copySummary(id){
+  const b=findB(id); if(!b) return;
+  const guests=bookingGuestList(id);
+  const chosen=b.hotels.find(h=>h.id===b.chosenChoiceId)||null;
+  const lines=[
+    `สาขา: ${b.branch}${b.prov?' จ.'+b.prov:''}`,
+    `ทีม: ${b.team}`,
+    `เข้าพัก: ${fmtDate(b.checkin)} – ${fmtDate(b.checkout)}`,
+    `ห้อง: ${pair(guests).length} ห้อง · ${guests.length} คน`,
+    ...guests.map(g=>`- ${g.name||'(ไม่ระบุชื่อ)'} (${g.g==='f'?'หญิง':'ชาย'})`),
+    chosen ? `ที่พัก: ${chosen.name}` : 'ที่พัก: ยังไม่ได้เลือก'
+  ];
+  copyTxt(lines.join('\n'));
+}
+
+// Replaces the old voucher-attach screen — the voucher file itself is
+// emailed to the employee from outside this system now, so all this needs
+// is the hotel's confirmation number. No status guard: can also reopen this
+// to correct a typo after status is already จองสำเร็จ.
+function renderConfirmBooking(id){
   const b=findB(id)||{};
-  VOUCH={ id, code:(b.voucher&&b.voucher.code)||'', url:(b.voucher&&b.voucher.url)||'',
-           file:null, fileName:'', uploadedPath:null, uploading:false, busy:false };
-  drawVoucher(id);
+  CONFIRM={ id, code:b.confirmationNo||'', busy:false };
+  drawConfirmBooking(id);
 }
-function drawVoucher(id){
-  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminDetail('${id}')">‹</span><h1>แนบวอเชอร์</h1></div>
+function drawConfirmBooking(id){
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminDetail('${id}')">‹</span><h1>เลขยืนยันจากโรงแรม</h1></div>
    <div class="body">
-    <div class="card"><div class="label">เลขยืนยันจากชูวับ (จำเป็น)</div>
-     <input class="txt" placeholder="เช่น CHW-889201" value="${esc(VOUCH.code)}" oninput="VOUCH.code=this.value"/></div>
-    <div class="card">
-     <div class="label">ไฟล์วอเชอร์ (เลือกอย่างใดอย่างหนึ่ง)</div>
-     <input type="file" accept="image/*,application/pdf" onchange="onVoucherFilePicked(event)"/>
-     ${VOUCH.fileName?`<div class="hint" style="margin-top:6px">📎 ${esc(VOUCH.fileName)} ${VOUCH.uploading?'· กำลังอัปโหลด…':(VOUCH.uploadedPath?'· พร้อมส่ง':'')}</div>`:''}
-     <div class="hint" style="text-align:center;margin:10px 0">— หรือ —</div>
-     <div class="label">วางลิงก์ไฟล์วอเชอร์</div>
-     <input class="txt" placeholder="วางลิงก์ไฟล์วอเชอร์ (Google Drive / OneDrive)" value="${esc(VOUCH.url)}" oninput="VOUCH.url=this.value"/>
-     <div class="hint" style="margin:8px 0 0">อัปโหลดไฟล์ด้านบน หรือวางลิงก์ที่แชร์ได้ — พนักงานจะกดเปิดได้จากหน้าสถานะ</div></div>
-    <button class="btn" ${(VOUCH.busy||VOUCH.uploading)?'disabled':''} onclick="confirmVoucher('${id}')">${VOUCH.busy?'กำลังส่ง…':'ส่งวอเชอร์ให้พนักงาน'}</button></div></div>`;
+    <div class="card"><div class="label">เลขยืนยันที่โรงแรมให้มา (จำเป็น)</div>
+     <input class="txt" placeholder="เช่น CHW-889201" value="${esc(CONFIRM.code)}" oninput="CONFIRM.code=this.value"/>
+     <div class="hint" style="margin-top:8px">ไม่ต้องแนบวอเชอร์แล้ว — จะส่งเข้าอีเมลพนักงานโดยตรง</div></div>
+    <button class="btn" ${CONFIRM.busy?'disabled':''} onclick="saveConfirmBooking('${id}')">${CONFIRM.busy?'กำลังบันทึก…':'บันทึกเลขยืนยัน'}</button></div></div>`;
 }
-async function onVoucherFilePicked(ev){
-  const f = ev.target.files && ev.target.files[0];
-  if(!f) return;
-  VOUCH.file=f; VOUCH.fileName=f.name; VOUCH.uploadedPath=null; VOUCH.uploading=true; rerender(()=>drawVoucher(VOUCH.id));
+async function saveConfirmBooking(id){
+  if(CONFIRM.busy) return;
+  if(!CONFIRM.code||!CONFIRM.code.trim()){ toast('กรอกเลขยืนยันจากโรงแรมก่อน'); return; }
+  CONFIRM.busy=true; rerender(()=>drawConfirmBooking(id));
   try{
-    const sig = await apiSend('/voucher-upload-url','POST',{ booking_id:VOUCH.id, filename:f.name, content_type:f.type||'application/octet-stream' });
-    const putRes = await fetch(sig.signed_url, { method:'PUT', headers:{ 'Content-Type': f.type||'application/octet-stream' }, body:f });
-    if(!putRes.ok) throw new Error('อัปโหลดไฟล์ไม่สำเร็จ ('+putRes.status+')');
-    VOUCH.uploadedPath = sig.path;
-  }catch(e){
-    toast('อัปโหลดไม่สำเร็จ: '+e.message);
-    VOUCH.file=null; VOUCH.fileName=''; VOUCH.uploadedPath=null;
-  }
-  VOUCH.uploading=false; rerender(()=>drawVoucher(VOUCH.id));
-}
-async function confirmVoucher(id){
-  if(VOUCH.busy || VOUCH.uploading) return;
-  if(!VOUCH.code||!VOUCH.code.trim()){ toast('กรอกเลขยืนยันจากชูวับก่อน'); return; }
-  const finalPath = VOUCH.uploadedPath || null;
-  const finalUrl = !finalPath && VOUCH.url && VOUCH.url.trim() ? VOUCH.url.trim() : null;
-  if(!finalPath && !finalUrl){ toast('แนบไฟล์หรือวางลิงก์วอเชอร์อย่างใดอย่างหนึ่งก่อน'); return; }
-  VOUCH.busy=true; rerender(()=>drawVoucher(id));
-  try{
-    await apiSend('/bookings','PATCH',{ booking_id:id, action:'attach_voucher', confirmation_no:VOUCH.code, voucher_storage_path:finalPath, voucher_file_url:finalUrl });
-    toast('บันทึกวอเชอร์แล้ว ✓ พนักงานเห็นได้ทันที');
+    await apiSend('/bookings','PATCH',{ booking_id:id, action:'confirm_booking', confirmation_no:CONFIRM.code });
+    toast('บันทึกเลขยืนยันแล้ว ✓ พนักงานเห็นได้ทันที');
     await reloadBookings(false);
-    VOUCH.busy=false;
-    setTimeout(renderAdminQueue,400);
-  }catch(e){ VOUCH.busy=false; toast(e.message); rerender(()=>drawVoucher(id)); }
+    CONFIRM.busy=false;
+    setTimeout(()=>renderAdminDetail(id),400);
+  }catch(e){ CONFIRM.busy=false; toast(e.message); rerender(()=>drawConfirmBooking(id)); }
 }
 
 /* ================= เบิกคืนมัดจำ (พนักงาน) ================= */

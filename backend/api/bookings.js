@@ -61,7 +61,7 @@ const BOOKING_SELECT = `
   id, team_code, branch_code, work_schedule_id, checkin_date, checkout_date, status,
   reject_reason, chosen_hotel_choice_id, confirmation_no, voucher_file_url, voucher_storage_path, note,
   mission_type, mission_type_note, auto_approved, rule_violations,
-  area_approved_by, area_approved_at,
+  hotel_picked_by, hotel_picked_at, final_approved_by, final_approved_at,
   created_by_employee, created_at, updated_at,
   branches ( name, province, district, lat, lng ),
   booking_hotel_choices!booking_hotel_choices_booking_id_fkey ( id, hotel_id, custom_name, custom_map_link, custom_price, rank, unavailable_at, hotels ( code, name, province, district, lat, lng, map_link, default_price_per_night, on_choowap ) ),
@@ -107,7 +107,11 @@ async function listBookings(req, res, actor, isAdmin) {
     q = q.in('team_code', teamCodes.length ? teamCodes : ['__none__']);
   } else if (scope === 'open_beds') {
     // Anyone can browse rooms with a spare bed to request joining — not admin-gated.
-    q = q.in('status', ['ดำเนินการจอง', 'จองสำเร็จ']).gte('checkout_date', today);
+    // A real room/hotel choice exists from รอเจ้าของอนุมัติ onward (choose_hotel already
+    // ran); the old single "ดำเนินการจอง" stage split into two ("รอเจ้าของอนุมัติ" then
+    // "รอเลขยืนยันโรงแรม"), so both need to stay in this list to keep the same real-world
+    // set of bookings visible here.
+    q = q.in('status', ['รอเจ้าของอนุมัติ', 'รอเลขยืนยันโรงแรม', 'จองสำเร็จ']).gte('checkout_date', today);
   } else {
     // An employee sees what they submitted plus anything else their team submitted,
     // so a stand-in can pick up a booking the usual booker started.
@@ -214,13 +218,15 @@ async function createBooking(req, res, actor, body) {
   // Rule: warn when the same person is already booked on overlapping dates.
   const conflicts = await findGuestConflicts(guests, checkin_date, checkout_date);
 
-  // §8.5 item 2 — auto-approve straight to "ดำเนินการจอง" (skip the manual
-  // admin review gate) when every rule passes: no date-overlap conflict, every
-  // proposed hotel is already in the registry (not a custom entry awaiting
-  // admin confirmation), and none exceeds the per-room-night price ceiling.
-  // A booking with a spare bed (e.g. a lone traveller) is NOT treated as a
-  // violation — that's an inherent, unavoidable cost until cross-team room
-  // sharing (phase 2) exists, not something this admin review would fix.
+  // §8.5 item 2 — originally an auto-approve bypass; since the AREA-approval
+  // stage was introduced every booking must land at ส่งคำขอ regardless (see
+  // initialStatus below), so this only computes rule_violations as an
+  // informational hint now, not a status shortcut. Checks: no date-overlap
+  // conflict, every proposed hotel already in the registry (not a custom
+  // entry awaiting confirmation), none exceeds the per-room-night price
+  // ceiling. A booking with a spare bed (e.g. a lone traveller) is NOT
+  // treated as a violation — that's an inherent, unavoidable cost until
+  // cross-team room sharing (phase 2) exists, not something review would fix.
   const ruleViolations = [];
   if (conflicts.length) ruleViolations.push(...conflicts);
 
@@ -369,8 +375,8 @@ async function requestChange(req, res, actor, body) {
 
   const { data: bk } = await supabase.from('bookings').select('id, status').eq('id', booking_id).maybeSingle();
   if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
-  // Confirmed rule: employees may only raise a change once the admin has started booking.
-  if (bk.status === 'ส่งคำขอ' || bk.status === 'อนุมัติพื้นที่แล้ว') return fail(res, 400, 'รอแอดมินเริ่มดำเนินการจองก่อน ถึงจะขอเปลี่ยนแปลงได้');
+  // Confirmed rule: employees may only raise a change once a hotel is actually locked in.
+  if (bk.status === 'ส่งคำขอ' || bk.status === 'รอเจ้าของอนุมัติ') return fail(res, 400, 'รอเลือกที่พักและอนุมัติก่อน ถึงจะขอเปลี่ยนแปลงได้');
 
   const { error } = await supabase.from('booking_changes').insert({
     booking_id,
@@ -412,18 +418,52 @@ async function handlePatch(req, res, actor, isAdmin, body) {
   const { booking_id, action } = body;
   if (!booking_id) return fail(res, 400, 'ไม่ได้ระบุการจอง');
 
-  const { data: bk } = await supabase.from('bookings').select('id, status, team_code').eq('id', booking_id).maybeSingle();
+  const { data: bk } = await supabase.from('bookings').select('id, status, team_code, chosen_hotel_choice_id').eq('id', booking_id).maybeSingle();
   if (!bk) return fail(res, 404, 'ไม่พบการจองนี้');
 
-  const adminOnly = ['start_processing', 'choose_hotel', 'attach_voucher', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'cancel_booking', 'add_guest_admin', 'accept_join_request', 'dismiss_join_request', 'mark_hotel_unavailable', 'add_hotel_choice'];
+  // Two tiers now instead of one: cancel_booking is a hard, irreversible delete
+  // (cascades to guests/choices/changes/join-requests/status-log) so it stays
+  // owner-only; final_approve is the owner's mandatory sign-off gate itself.
+  // Everything else AREA now does hands-on (the work that used to be admin's
+  // alone) is scoped to their assigned teams via canAreaApprove, same rule the
+  // old area_approve/area_reject already used.
+  const adminOnly = ['final_approve', 'cancel_booking'];
+  const adminOrArea = ['choose_hotel', 'submit_for_approval', 'confirm_booking', 'reject', 'mark_problem', 'accept_change', 'dismiss_change', 'add_guest_admin', 'accept_join_request', 'dismiss_join_request', 'mark_hotel_unavailable', 'add_hotel_choice'];
   if (adminOnly.includes(action) && !isAdmin) return fail(res, 403, 'เฉพาะแอดมินเท่านั้น');
+  if (adminOrArea.includes(action) && !isAdmin && !(await canAreaApprove(actor, bk.team_code))) return fail(res, 403, 'ไม่มีสิทธิ์ทำรายการนี้');
 
   const stamp = { updated_at: new Date().toISOString() };
 
-  if (action === 'start_processing') {
-    const { error } = await supabase.from('bookings').update({ status: 'ดำเนินการจอง', ...stamp }).eq('id', booking_id);
+  // Replaces start_processing — AREA (or the owner, bypassing AREA) has picked
+  // a hotel via choose_hotel below and routes it to the owner's mandatory
+  // final approval. Renamed because "start processing" described the old
+  // admin-does-the-booking-legwork step; that legwork is choose_hotel now,
+  // this action's only job left is "hand this to the owner."
+  if (action === 'submit_for_approval') {
+    if (!bk.chosen_hotel_choice_id) return fail(res, 400, 'ต้องเลือกที่พักก่อนส่งขออนุมัติ');
+    if (bk.status !== 'ส่งคำขอ') return fail(res, 400, 'การจองนี้ผ่านขั้นนี้ไปแล้ว');
+    const { error } = await supabase
+      .from('bookings')
+      .update({ status: 'รอเจ้าของอนุมัติ', hotel_picked_by: actor.code, hotel_picked_at: new Date().toISOString(), ...stamp })
+      .eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
-    await logStatus(booking_id, bk.status, 'ดำเนินการจอง', actor.code);
+    await logStatus(booking_id, bk.status, 'รอเจ้าของอนุมัติ', actor.code);
+    return await respondFresh(res, booking_id);
+  }
+
+  // The owner's mandatory sign-off — every booking AREA finishes must pass
+  // through here, no exceptions. Also callable straight from ส่งคำขอ (skipping
+  // AREA entirely) so the owner can still pick a hotel herself and approve in
+  // one motion, exactly like before this rework.
+  if (action === 'final_approve') {
+    if (!bk.chosen_hotel_choice_id) return fail(res, 400, 'ยังไม่ได้เลือกที่พัก');
+    if (bk.status !== 'รอเจ้าของอนุมัติ' && bk.status !== 'ส่งคำขอ') return fail(res, 400, 'การจองนี้ไม่ได้อยู่ในขั้นรออนุมัติ');
+    const { error } = await supabase
+      .from('bookings')
+      .update({ status: 'รอเลขยืนยันโรงแรม', final_approved_by: actor.code, final_approved_at: new Date().toISOString(), ...stamp })
+      .eq('id', booking_id);
+    if (error) return fail(res, 500, error.message);
+    await logStatus(booking_id, bk.status, 'รอเลขยืนยันโรงแรม', actor.code);
     return await respondFresh(res, booking_id);
   }
 
@@ -471,61 +511,25 @@ async function handlePatch(req, res, actor, isAdmin, body) {
     return await respondFresh(res, booking_id);
   }
 
-  if (action === 'attach_voucher') {
-    const { confirmation_no, voucher_file_url, voucher_storage_path } = body;
-    // Confirmed rule: a booking cannot reach จองสำเร็จ without the Choowap confirmation number.
-    if (!confirmation_no || !String(confirmation_no).trim()) return fail(res, 400, 'ต้องกรอกเลขยืนยันจากชูวับก่อน');
-    // Either a directly-uploaded file (voucher_storage_path, private Storage bucket) or a
-    // manually-pasted external link (voucher_file_url) — the admin's choice, not required together.
-    if (!voucher_storage_path && !(voucher_file_url && String(voucher_file_url).trim())) {
-      return fail(res, 400, 'แนบไฟล์หรือวางลิงก์วอเชอร์อย่างใดอย่างหนึ่งก่อน');
-    }
+  // Replaces attach_voucher — the voucher itself is emailed to the employee
+  // from outside this system now, so the only thing this system still needs
+  // is the hotel's real confirmation number. No status guard on purpose: AREA
+  // enters it once the hotel actually confirms, and the owner can come back
+  // and correct a typo afterward even once status is already จองสำเร็จ.
+  if (action === 'confirm_booking') {
+    const { confirmation_no } = body;
+    if (!confirmation_no || !String(confirmation_no).trim()) return fail(res, 400, 'ต้องกรอกเลขยืนยันจากโรงแรมก่อน');
     const { error } = await supabase
       .from('bookings')
-      .update({
-        status: 'จองสำเร็จ',
-        confirmation_no: String(confirmation_no).trim(),
-        voucher_file_url: voucher_file_url || null,
-        voucher_storage_path: voucher_storage_path || null,
-        ...stamp
-      })
+      .update({ status: 'จองสำเร็จ', confirmation_no: String(confirmation_no).trim(), ...stamp })
       .eq('id', booking_id);
     if (error) return fail(res, 500, error.message);
-    await logStatus(booking_id, bk.status, 'จองสำเร็จ', actor.code);
+    if (bk.status !== 'จองสำเร็จ') await logStatus(booking_id, bk.status, 'จองสำเร็จ', actor.code);
     return await respondFresh(res, booking_id);
   }
 
   if (action === 'reject') {
     const { reason } = body;
-    if (!reason || !String(reason).trim()) return fail(res, 400, 'ต้องกรอกเหตุผลที่ส่งกลับให้แก้ไข');
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: 'ต้องแก้ไข', reject_reason: String(reason).trim(), ...stamp })
-      .eq('id', booking_id);
-    if (error) return fail(res, 500, error.message);
-    await logStatus(booking_id, bk.status, 'ต้องแก้ไข', actor.code);
-    return await respondFresh(res, booking_id);
-  }
-
-  // AREA approval stage — not in adminOnly, gated by canAreaApprove instead
-  // (role AND team-scope: an AREA approver may only act on bookings whose
-  // team is actually assigned to them). Soft gate: nothing here blocks
-  // start_processing from running on a not-yet-approved booking.
-  if (action === 'area_approve') {
-    if (!(await canAreaApprove(actor, bk.team_code))) return fail(res, 403, 'คุณไม่ได้รับสิทธิ์ตรวจอนุมัติพื้นที่ทีมนี้');
-    if (bk.status !== 'ส่งคำขอ') return fail(res, 400, 'การจองนี้ผ่านขั้นตรวจอนุมัติพื้นที่ไปแล้ว หรือเลยขั้นนี้ไปแล้ว');
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: 'อนุมัติพื้นที่แล้ว', area_approved_by: actor.code, area_approved_at: new Date().toISOString(), ...stamp })
-      .eq('id', booking_id);
-    if (error) return fail(res, 500, error.message);
-    await logStatus(booking_id, bk.status, 'อนุมัติพื้นที่แล้ว', actor.code);
-    return await respondFresh(res, booking_id);
-  }
-
-  if (action === 'area_reject') {
-    const { reason } = body;
-    if (!(await canAreaApprove(actor, bk.team_code))) return fail(res, 403, 'คุณไม่ได้รับสิทธิ์ตรวจอนุมัติพื้นที่ทีมนี้');
     if (!reason || !String(reason).trim()) return fail(res, 400, 'ต้องกรอกเหตุผลที่ส่งกลับให้แก้ไข');
     const { error } = await supabase
       .from('bookings')

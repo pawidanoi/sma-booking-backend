@@ -97,8 +97,8 @@ async function schedulePending(res) {
 
 const SCHEDULE_STAGE_BY_STATUS = {
   'ส่งคำขอ': 'awaiting_area',
-  'อนุมัติพื้นที่แล้ว': 'awaiting_admin',
-  'ดำเนินการจอง': 'admin_processing',
+  'รอเจ้าของอนุมัติ': 'awaiting_admin',
+  'รอเลขยืนยันโรงแรม': 'admin_processing',
   'จองสำเร็จ': 'done',
   'ต้องแก้ไข': 'needs_fix',
   'ติดปัญหา': 'problem'
@@ -176,9 +176,10 @@ async function areaPendingSchedule(res, actor) {
 }
 
 // ---------------------------------------------------------------- urgent_now
-// One combined "what needs attention right now" feed across the three places
-// a booking can silently stall — unbooked jobs, AREA review, and a missing
-// voucher — instead of a head having to check schedule_flow, the AREA queue,
+// One combined "what needs attention right now" feed across the four places
+// a booking can silently stall — unbooked jobs, AREA hasn't picked a hotel,
+// the owner hasn't given final approval, and a missing hotel confirmation
+// number — instead of a head having to check schedule_flow, the AREA queue,
 // and the admin queue separately to see what's actually at risk today.
 
 async function urgentNow(res) {
@@ -206,16 +207,19 @@ async function urgentNow(res) {
 
   const { data: bookings, error: bErr } = await supabase
     .from('bookings')
-    .select('id, team_code, branch_code, status, checkin_date, voucher_file_url, voucher_storage_path, branches(name)')
-    .in('status', ['ส่งคำขอ', 'ดำเนินการจอง']);
+    .select('id, team_code, branch_code, status, checkin_date, confirmation_no, branches(name)')
+    .in('status', ['ส่งคำขอ', 'รอเจ้าของอนุมัติ', 'รอเลขยืนยันโรงแรม']);
   if (bErr) return fail(res, 500, bErr.message);
   (bookings || []).forEach((b) => {
     const d = daysUntil(b.checkin_date);
     if (b.status === 'ส่งคำขอ' && d <= 4) {
       items.push({ type: 'awaiting_area', booking_id: b.id, team_code: b.team_code, branch_name: b.branches?.name || b.branch_code, date: b.checkin_date, days_until: d });
     }
-    if (b.status === 'ดำเนินการจอง' && d <= 2 && !b.voucher_file_url && !b.voucher_storage_path) {
-      items.push({ type: 'missing_voucher', booking_id: b.id, team_code: b.team_code, branch_name: b.branches?.name || b.branch_code, date: b.checkin_date, days_until: d });
+    if (b.status === 'รอเจ้าของอนุมัติ' && d <= 3) {
+      items.push({ type: 'awaiting_final_approval', booking_id: b.id, team_code: b.team_code, branch_name: b.branches?.name || b.branch_code, date: b.checkin_date, days_until: d });
+    }
+    if (b.status === 'รอเลขยืนยันโรงแรม' && d <= 2 && !b.confirmation_no) {
+      items.push({ type: 'missing_confirmation', booking_id: b.id, team_code: b.team_code, branch_name: b.branches?.name || b.branch_code, date: b.checkin_date, days_until: d });
     }
   });
 
@@ -241,20 +245,25 @@ async function cycleTime(res) {
     byBooking.get(l.booking_id).push(l);
   });
 
-  const areaHours = []; // ส่งคำขอ -> อนุมัติพื้นที่แล้ว, keyed by who approved
-  const adminHours = []; // อนุมัติพื้นที่แล้ว (or ส่งคำขอ) -> ดำเนินการจอง, keyed by who started it
+  const areaHours = []; // ส่งคำขอ -> รอเจ้าของอนุมัติ (AREA, or the owner bypassing AREA, picked a hotel), keyed by who picked it
+  const adminHours = []; // รอเจ้าของอนุมัติ (or ส่งคำขอ, if the owner bypassed AREA) -> รอเลขยืนยันโรงแรม, keyed by who gave final approval
+  const confirmHours = []; // รอเลขยืนยันโรงแรม -> จองสำเร็จ, keyed by who entered the confirmation number
 
   for (const rows of byBooking.values()) {
     const at = (status) => rows.find((r) => r.to_status === status);
     const submitted = at('ส่งคำขอ');
-    const areaApproved = at('อนุมัติพื้นที่แล้ว');
-    const processing = at('ดำเนินการจอง');
-    if (submitted && areaApproved) {
-      areaHours.push({ code: areaApproved.changed_by, hours: (new Date(areaApproved.changed_at) - new Date(submitted.changed_at)) / 3600000 });
+    const hotelPicked = at('รอเจ้าของอนุมัติ');
+    const finalApproved = at('รอเลขยืนยันโรงแรม');
+    const confirmed = at('จองสำเร็จ');
+    if (submitted && hotelPicked) {
+      areaHours.push({ code: hotelPicked.changed_by, hours: (new Date(hotelPicked.changed_at) - new Date(submitted.changed_at)) / 3600000 });
     }
-    if (processing) {
-      const from = areaApproved || submitted;
-      if (from) adminHours.push({ code: processing.changed_by, hours: (new Date(processing.changed_at) - new Date(from.changed_at)) / 3600000 });
+    if (finalApproved) {
+      const from = hotelPicked || submitted;
+      if (from) adminHours.push({ code: finalApproved.changed_by, hours: (new Date(finalApproved.changed_at) - new Date(from.changed_at)) / 3600000 });
+    }
+    if (confirmed && finalApproved) {
+      confirmHours.push({ code: confirmed.changed_by, hours: (new Date(confirmed.changed_at) - new Date(finalApproved.changed_at)) / 3600000 });
     }
   }
 
@@ -280,8 +289,10 @@ async function cycleTime(res) {
   return json(res, 200, {
     area_avg_hours: avgOf(areaHours),
     admin_avg_hours: avgOf(adminHours),
+    confirm_avg_hours: avgOf(confirmHours),
     area_by_approver: groupBy(areaHours),
-    admin_by_person: groupBy(adminHours)
+    admin_by_person: groupBy(adminHours),
+    confirm_by_person: groupBy(confirmHours)
   });
 }
 
