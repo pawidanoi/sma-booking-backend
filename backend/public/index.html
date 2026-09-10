@@ -1459,12 +1459,21 @@ function addDaysIso(dateStr,n){
   d.setUTCDate(d.getUTCDate()+n);
   return d.toISOString().slice(0,10);
 }
+// ไฟล์บางรุ่นส่งวันที่เป็น "1/9/2026" (D/M/YYYY) แทน ISO "2026-09-01" — แปลงให้เป็น ISO เสมอ
+// ก่อนใช้เทียบ/บวกวันที่ ไม่งั้น addDaysIso จะได้ Invalid Date แล้วทำให้อ่านไฟล์ล้มทั้งไฟล์
+function toIsoDateFromText(raw){
+  const s=String(raw||'').trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return '';
+}
 function parseScheduleDailyCsv(text){
   const rows=parseCsvRows(text).slice(1).filter(r=>(r[4]||'').trim());
   const parsed=rows.map(r=>({
     rowType:(r[0]||'').trim(), branchCode:(r[1]||'').trim(), branchName:(r[2]||'').trim(),
-    missionType:(r[3]||'').trim(), teamCode:teamRawToCode(r[4]), date:(r[5]||'').trim()
-  }));
+    missionType:(r[3]||'').trim(), teamCode:teamRawToCode(r[4]), date:toIsoDateFromText(r[5])
+  })).filter(r=>r.date);
   const byTeam=new Map();
   parsed.forEach(r=>{ if(!r.teamCode) return; if(!byTeam.has(r.teamCode)) byTeam.set(r.teamCode,[]); byTeam.get(r.teamCode).push(r); });
 
@@ -1523,19 +1532,24 @@ function renderImportPreview(){
       <td>${esc(r.date_end)}</td>
       <td>${esc(r.mission_type)}</td>
       <td><input class="txt" style="width:60px;padding:6px;${r.advance_days_matched?'':'border-color:var(--amber)'}" type="number" min="0" max="14" value="${r.advance_days}" onchange="IMPORT_PREVIEW[${i}].advance_days=parseInt(this.value)||0"/>${r.advance_days_matched?'':' <span title="ไม่พบประเภทงานนี้ในตารางเข้าพักก่อน — ตรวจ/แก้เอง">⚠️</span>'}</td>
+      <td><span class="rmv" onclick="removeImportRow(${i})" title="ลบแผนนี้ออกจากการนำเข้า">✕ ลบ</span></td>
     </tr>`;
   }).join('');
   $("#importPreviewArea").innerHTML=`
     <div class="card" style="margin-top:14px;overflow-x:auto">
      <div class="label">พบ ${rows.length} แถวในไฟล์ · ${esc(IMPORT_FILENAME)}</div>
-     <div class="hint">แถวสีแดง = รหัสทีม/สาขาไม่ตรงทะเบียน หรือวันที่ไม่ครบ — จะถูกข้ามตอนนำเข้า (ตรวจซ้ำอีกทีฝั่งเซิร์ฟเวอร์)</div>
+     <div class="hint">แถวสีแดง = รหัสทีม/สาขาไม่ตรงทะเบียน หรือวันที่ไม่ครบ — จะถูกข้ามตอนนำเข้า (ตรวจซ้ำอีกทีฝั่งเซิร์ฟเวอร์)<br/>กด "✕ ลบ" เพื่อตัดแผนที่ไม่ต้องการออกก่อนยืนยันนำเข้าได้</div>
      ${unmatchedTypes?'<div class="hint" style="color:var(--amber)">⚠️ ไม่พบแท็บ/คอลัมน์ตารางเข้าพักก่อนตามประเภทงานในไฟล์นี้ — เข้าพักก่อน(วัน) ตั้งเป็น 0 ทุกแถว แก้เองได้ในตาราง</div>':''}
      <table style="width:100%;font-size:13px;margin-top:8px;border-collapse:collapse">
-      <thead><tr><th>ทีม</th><th>รหัสสาขา</th><th>วันเริ่ม</th><th>วันจบ</th><th>ประเภทงาน</th><th>เข้าพักก่อน(วัน)</th></tr></thead>
+      <thead><tr><th>ทีม</th><th>รหัสสาขา</th><th>วันเริ่ม</th><th>วันจบ</th><th>ประเภทงาน</th><th>เข้าพักก่อน(วัน)</th><th></th></tr></thead>
       <tbody>${trs}</tbody>
      </table>
     </div>
     <button class="btn" style="margin-top:14px" onclick="confirmScheduleImport()">ยืนยันนำเข้า ${rows.length} แถว</button>`;
+}
+function removeImportRow(i){
+  IMPORT_PREVIEW.splice(i,1);
+  renderImportPreview();
 }
 
 async function confirmScheduleImport(){
