@@ -1362,9 +1362,9 @@ function renderScheduleImport(){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>นำเข้าแผนงาน</h1></div>
    <div class="body">
     <div class="card">
-     <div class="label">เลือกไฟล์ Excel แผนงาน (แท็บชื่อ "แผนงาน")</div>
-     <input type="file" id="scheduleFile" accept=".xlsx,.xls" onchange="onScheduleFileChosen(event)"/>
-     <div class="hint" style="margin-top:8px">อ่านคอลัมน์ รหัสสาขา / ทีม / วันที่เริ่มงาน / วันที่จบงาน / ประเภทงาน — คอลัมน์อื่นในไฟล์ไม่ใช้ ไม่ต้องลบออกก่อนอัปโหลด<br/>ถ้าไฟล์มีแท็บอื่นที่มีคอลัมน์ "ประเภทงาน" คู่กับ "จองก่อนเข้าพัก" หรือ "เข้าพักก่อน" ระบบจะใช้แท็บนั้นเติม "เข้าพักก่อน(วัน)" ให้อัตโนมัติตามประเภทงานของแต่ละแถว</div>
+     <div class="label">เลือกไฟล์ Excel แผนงาน (แท็บชื่อ "แผนงาน") หรือไฟล์ CSV แผนงานรายวันจาก NSA Field Event Planner</div>
+     <input type="file" id="scheduleFile" accept=".xlsx,.xls,.csv" onchange="onScheduleFileChosen(event)"/>
+     <div class="hint" style="margin-top:8px">Excel: อ่านคอลัมน์ รหัสสาขา / ทีม / วันที่เริ่มงาน / วันที่จบงาน / ประเภทงาน — คอลัมน์อื่นในไฟล์ไม่ใช้ ไม่ต้องลบออกก่อนอัปโหลด<br/>ถ้าไฟล์มีแท็บอื่นที่มีคอลัมน์ "ประเภทงาน" คู่กับ "จองก่อนเข้าพัก" หรือ "เข้าพักก่อน" ระบบจะใช้แท็บนั้นเติม "เข้าพักก่อน(วัน)" ให้อัตโนมัติตามประเภทงานของแต่ละแถว<br/>CSV: อ่านคอลัมน์ ประเภท / รหัสสาขา / ชื่อสาขา / ประเภทแฟร์ / ทีม / วันที่ (1 แถว = 1 วัน) — เข้าพักก่อน(วัน) ตั้งเป็น 0 ให้แก้เองในตาราง</div>
     </div>
     <div id="importPreviewArea"></div>
    </div></div>`;
@@ -1395,32 +1395,108 @@ function findAdvanceDaysLookup(wb){
 function onScheduleFileChosen(evt){
   const file=evt.target.files[0];
   if(!file) return;
+  const isCsv=/\.csv$/i.test(file.name);
   const reader=new FileReader();
   reader.onload=(e)=>{
     try{
-      const wb=XLSX.read(e.target.result,{ type:'array', cellDates:true });
-      const sheetName=wb.SheetNames.includes('แผนงาน')?'แผนงาน':wb.SheetNames[0];
-      const ws=wb.Sheets[sheetName];
-      const rows=XLSX.utils.sheet_to_json(ws,{ defval:'' });
-      const advanceDaysByType=findAdvanceDaysLookup(wb);
-      IMPORT_PREVIEW=rows.map(r=>{
-        const missionType=String(r['ประเภทงาน']||'').trim();
-        const looked=advanceDaysByType[missionType];
-        return {
-          team_code:String(r['ทีม']||'').trim(),
-          branch_code:String(r['รหัสสาขา']||'').trim(),
-          date_start:toIsoDateFromExcel(r['วันที่เริ่มงาน']),
-          date_end:toIsoDateFromExcel(r['วันที่จบงาน']),
-          mission_type:missionType,
-          advance_days:Number.isInteger(looked)?looked:0,
-          advance_days_matched:Number.isInteger(looked)
-        };
-      }).filter(r=>r.team_code||r.branch_code||r.date_start||r.date_end);
+      if(isCsv){
+        IMPORT_PREVIEW=parseScheduleDailyCsv(e.target.result);
+      }else{
+        const wb=XLSX.read(e.target.result,{ type:'array', cellDates:true });
+        const sheetName=wb.SheetNames.includes('แผนงาน')?'แผนงาน':wb.SheetNames[0];
+        const ws=wb.Sheets[sheetName];
+        const rows=XLSX.utils.sheet_to_json(ws,{ defval:'' });
+        const advanceDaysByType=findAdvanceDaysLookup(wb);
+        IMPORT_PREVIEW=rows.map(r=>{
+          const missionType=String(r['ประเภทงาน']||'').trim();
+          const looked=advanceDaysByType[missionType];
+          return {
+            team_code:String(r['ทีม']||'').trim(),
+            branch_code:String(r['รหัสสาขา']||'').trim(),
+            date_start:toIsoDateFromExcel(r['วันที่เริ่มงาน']),
+            date_end:toIsoDateFromExcel(r['วันที่จบงาน']),
+            mission_type:missionType,
+            advance_days:Number.isInteger(looked)?looked:0,
+            advance_days_matched:Number.isInteger(looked)
+          };
+        }).filter(r=>r.team_code||r.branch_code||r.date_start||r.date_end);
+      }
       IMPORT_FILENAME=file.name;
       renderImportPreview();
     }catch(err){ toast('อ่านไฟล์ไม่สำเร็จ: '+err.message); }
   };
-  reader.readAsArrayBuffer(file);
+  if(isCsv) reader.readAsText(file,'utf-8'); else reader.readAsArrayBuffer(file);
+}
+
+// รูปแบบ CSV รายวันจาก NSA Field Event Planner: 1 แถว = 1 วัน
+// คอลัมน์: ประเภท, รหัสสาขา, ชื่อสาขา, ประเภทแฟร์, ทีม, วันที่
+// จัดกลุ่มวันติดกัน (วัน PR + วันจัดงาน) ของแต่ละสาขาในทีมเดียวกัน แล้วคำนวณวันเริ่ม/วันจบงาน
+// เหมือนตัวอ่าน CSV ฝั่ง sma-approval-console (lib/schedule-import.js:parseScheduleCsvDaily) —
+// ถ้าแก้ตรรกะฝั่งนั้น ให้แก้ที่นี่ให้ตรงกันด้วย
+function parseCsvRows(text){
+  const rows=[]; let row=[], field='', inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"' && text[i+1]==='"'){ field+='"'; i++; }
+      else if(c==='"'){ inQuotes=false; }
+      else field+=c;
+    }else if(c==='"'){ inQuotes=true; }
+    else if(c===','){ row.push(field); field=''; }
+    else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+    else if(c==='\r'){ /* skip */ }
+    else field+=c;
+  }
+  if(field!=='' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function teamRawToCode(raw){
+  const m=String(raw||'').trim().match(/^ทีม\s*(\d+)$/);
+  return m?('SMA'+m[1]):null;
+}
+function addDaysIso(dateStr,n){
+  const d=new Date(dateStr+'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function parseScheduleDailyCsv(text){
+  const rows=parseCsvRows(text).slice(1).filter(r=>(r[4]||'').trim());
+  const parsed=rows.map(r=>({
+    rowType:(r[0]||'').trim(), branchCode:(r[1]||'').trim(), branchName:(r[2]||'').trim(),
+    missionType:(r[3]||'').trim(), teamCode:teamRawToCode(r[4]), date:(r[5]||'').trim()
+  }));
+  const byTeam=new Map();
+  parsed.forEach(r=>{ if(!r.teamCode) return; if(!byTeam.has(r.teamCode)) byTeam.set(r.teamCode,[]); byTeam.get(r.teamCode).push(r); });
+
+  const out=[];
+  for(const [teamCode,teamRows] of byTeam){
+    const travelDates=new Set(teamRows.filter(r=>r.rowType==='เดินทาง').map(r=>r.date));
+    const byBranch=new Map();
+    teamRows.forEach(r=>{
+      if(r.rowType!=='วัน PR' && r.rowType!=='วันจัดงาน') return;
+      if(!byBranch.has(r.branchCode)) byBranch.set(r.branchCode,[]);
+      byBranch.get(r.branchCode).push(r);
+    });
+    for(const [branchCode,branchRowsRaw] of byBranch){
+      const branchRows=branchRowsRaw.slice().sort((a,b)=>a.date.localeCompare(b.date));
+      let runStart=0;
+      for(let i=1;i<=branchRows.length;i++){
+        const brokeRun=i===branchRows.length || addDaysIso(branchRows[i-1].date,1)!==branchRows[i].date;
+        if(!brokeRun) continue;
+        const run=branchRows.slice(runStart,i);
+        runStart=i;
+        const first=run[0], last=run[run.length-1];
+        let checkout=addDaysIso(last.date,1);
+        while(travelDates.has(checkout)) checkout=addDaysIso(checkout,1);
+        out.push({
+          team_code:teamCode, branch_code:branchCode,
+          date_start:first.date, date_end:checkout,
+          mission_type:last.missionType, advance_days:0, advance_days_matched:false
+        });
+      }
+    }
+  }
+  return out;
 }
 
 function toIsoDateFromExcel(v){
