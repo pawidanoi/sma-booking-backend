@@ -100,6 +100,12 @@
   .gt{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px}
   .gt.m{background:var(--male-soft);color:var(--male)}.gt.f{background:var(--female-soft);color:var(--female)}
   input.txt,select.txt{width:100%;font-family:inherit;font-size:14px;padding:12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;color:var(--ink)}
+  .branch-dd{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:40;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 28px rgba(0,0,0,.16);max-height:250px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .branch-dd .row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;padding:11px 14px;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer;border-top:1px solid var(--line)}
+  .branch-dd .row:first-child{border-top:0}
+  .branch-dd .row:hover,.branch-dd .row:active{background:var(--paper)}
+  .branch-dd .row .prov{color:var(--muted);font-size:11px;font-weight:600;white-space:nowrap;flex-shrink:0}
+  .branch-dd .empty{padding:14px;font-size:13px;color:var(--muted);text-align:center}
   textarea.txt{width:100%;font-family:inherit;font-size:14px;padding:12px;border:1.5px solid var(--line);border-radius:12px;resize:none;height:60px}
   .warn{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;padding:11px;border-radius:12px;margin-bottom:9px;font-weight:600}
   .warn.a{background:var(--amber-soft);color:#8a6200}.warn.d{background:var(--danger-soft);color:var(--danger)}.warn.g{background:var(--success-soft);color:var(--success)}
@@ -778,9 +784,14 @@ function filterBranchPicker(qRaw){
     .sort((a,b)=>(a.province||'').localeCompare(b.province||'')||(a.name||'').localeCompare(b.name||''))
     .slice(0,40);
   box.innerHTML = rows.length
-    ? rows.map(b=>`<div style="padding:11px 12px;border-top:1px solid var(--line);font-size:13px;cursor:pointer" onclick='pickAdhocBranch(${JSON.stringify(b.code)})'>${esc(b.name)}<span style="color:var(--muted);font-size:11px;margin-left:6px">จ.${esc(b.province||'-')}</span></div>`).join('')
-    : `<div style="padding:11px 12px;font-size:13px;color:var(--muted)">ไม่พบสาขา${q?' ที่ตรงกับ "'+esc(qRaw)+'"':''}</div>`;
+    ? rows.map(b=>`<div class="row" onclick='pickAdhocBranch(${JSON.stringify(b.code)})'>${esc(b.name)}<span class="prov">จ.${esc(b.province||'-')}</span></div>`).join('')
+    : `<div class="empty">ไม่พบสาขา${q?' ที่ตรงกับ "'+esc(qRaw)+'"':''}</div>`;
   box.style.display='block';
+}
+// blur ปิดดรอปดาวทันทีจะกันไม่ให้ onclick ของแถวใน dropdown ทำงานทัน (blur ยิงก่อน click เสมอ)
+// ดีเลย์สั้นๆ ให้ click ทำงานก่อนค่อยซ่อน
+function hideBranchPickerSoon(){
+  setTimeout(()=>{ const box=document.getElementById('branchSearchResults'); if(box) box.style.display='none'; }, 150);
 }
 function pickAdhocBranch(code){
   const box=document.getElementById('branchSearchResults');
@@ -887,11 +898,11 @@ function renderForm(){
   BRANCHES.forEach(b=>{ const k=b.province||'ยังไม่ระบุจังหวัด'; (byProv[k]=byProv[k]||[]).push(b); });
   // พิมพ์กรองได้ + ยังเป็นดรอปดาวคลิกเลือกได้ — พิมพ์แล้วกรองสด (ไม่ rerender ทั้งฟอร์มระหว่างพิมพ์ กัน
   // cursor กระโดด), โฟกัสแล้วโชว์รายชื่อทั้งหมดจัดกลุ่มตามจังหวัดเหมือน select เดิมให้เลือกโดยไม่ต้องพิมพ์ก็ได้
-  const branchPicker = (j.adhoc && !j.branchCode) ? `<div class="card">
+  const branchPicker = (j.adhoc && !j.branchCode) ? `<div class="card" style="position:relative">
     <div class="label">เลือกสาขาที่จะไป</div>
     <input class="txt" id="branchSearchInput" placeholder="พิมพ์ชื่อสาขาหรือจังหวัด หรือแตะเพื่อดูทั้งหมด" autocomplete="off"
-      oninput="filterBranchPicker(this.value)" onfocus="filterBranchPicker(this.value)">
-    <div id="branchSearchResults" style="display:none;max-height:280px;overflow-y:auto;border:1.5px solid var(--line);border-top:none;border-radius:0 0 12px 12px;margin-top:-8px"></div>
+      oninput="filterBranchPicker(this.value)" onfocus="filterBranchPicker(this.value)" onblur="hideBranchPickerSoon()">
+    <div id="branchSearchResults" class="branch-dd" style="display:none"></div>
   </div>` : '';
 
   const lastBooking = (!S.editId && j.branchCode) ? findLastBookingForBranch(j.branchCode) : null;
