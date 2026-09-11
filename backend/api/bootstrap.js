@@ -39,7 +39,7 @@ module.exports = async function handler(req, res) {
   }
   if (me.active === false) return fail(res, 403, 'บัญชีนี้ถูกปิดใช้งานแล้ว ติดต่อแอดมิน');
 
-  const [branchesRes, hotelsRes, teamsRes, staffRes, scheduleRes] = await Promise.all([
+  const [branchesRes, hotelsRes, teamsRes, staffRes, scheduleRes, hotelStaysRes] = await Promise.all([
     supabase.from('branches').select('code, name, district, province, lat, lng, needs_review').order('name'),
     supabase
       .from('hotels')
@@ -55,16 +55,28 @@ module.exports = async function handler(req, res) {
     supabase
       .from('work_schedule')
       .select('id, team_code, branch_code, date_start, date_end, advance_days')
-      .order('date_start')
+      .order('date_start'),
+    // "เคยพักแล้ว N ครั้ง" ต่อที่พักในทะเบียน — นับจากคำขอที่จองสำเร็จจริงเท่านั้น
+    supabase
+      .from('booking_hotel_choices')
+      .select('hotel_id, bookings!inner(status)')
+      .eq('bookings.status', 'จองสำเร็จ')
+      .not('hotel_id', 'is', null)
   ]);
 
-  const firstError = [branchesRes, hotelsRes, teamsRes, staffRes, scheduleRes].find((r) => r.error);
+  const firstError = [branchesRes, hotelsRes, teamsRes, staffRes, scheduleRes, hotelStaysRes].find((r) => r.error);
   if (firstError) return fail(res, 500, firstError.error.message);
+
+  const stayCountByHotelId = new Map();
+  for (const row of hotelStaysRes.data || []) {
+    stayCountByHotelId.set(row.hotel_id, (stayCountByHotelId.get(row.hotel_id) || 0) + 1);
+  }
+  const hotelsWithStayCount = (hotelsRes.data || []).map((h) => ({ ...h, stay_count: stayCountByHotelId.get(h.id) || 0 }));
 
   json(res, 200, {
     me,
     branches: branchesRes.data || [],
-    hotels: hotelsRes.data || [],
+    hotels: hotelsWithStayCount,
     teams: teamsRes.data || [],
     staff: staffRes.data || [],
     schedule: scheduleRes.data || [],

@@ -104,7 +104,11 @@ async function listBookings(req, res, actor, isAdmin) {
     const teamCodes = await getAreaTeamCodes(actor.code);
     // supabase-js's .in() with an empty array matches nothing correctly, but a
     // sentinel keeps intent explicit rather than relying on that edge case.
-    q = q.in('team_code', teamCodes.length ? teamCodes : ['__none__']);
+    // Also include the AREA person's own bookings — their home team is often not one
+    // of the teams they're assigned to approve for, so without this an AREA employee
+    // who books a room for themselves never sees it anywhere in their own queue.
+    const teamFilter = (teamCodes.length ? teamCodes : ['__none__']).join(',');
+    q = q.or(`team_code.in.(${teamFilter}),created_by_employee.eq.${actor.code}`);
   } else if (scope === 'open_beds') {
     // Anyone can browse rooms with a spare bed to request joining — not admin-gated.
     // A real room/hotel choice exists from รอเจ้าของอนุมัติ onward (choose_hotel already
@@ -307,6 +311,8 @@ async function createBooking(req, res, actor, body) {
     custom_name: c.custom_name || null,
     custom_map_link: c.custom_map_link || null,
     custom_price: c.custom_price ?? null,
+    custom_lat: c.custom_lat ?? null,
+    custom_lng: c.custom_lng ?? null,
     rank: i + 1
   }));
   const { error: cErr } = await supabase.from('booking_hotel_choices').insert(choiceRows);

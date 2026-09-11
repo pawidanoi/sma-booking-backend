@@ -353,7 +353,8 @@ function normHotel(h){
   return { id:h.id, code:h.code, name:h.name, prov:h.province, dist:h.district||null, near:h.near_area,
            lat, lng,
            price:h.default_price_per_night==null?null:Number(h.default_price_per_night),
-           choowap:!!h.on_choowap, mapLink: h.map_link || reviewLink(h.name, h.district, h.province) };
+           choowap:!!h.on_choowap, mapLink: h.map_link || reviewLink(h.name, h.district, h.province),
+           stayCount: h.stay_count || 0 };
 }
 // Shared everywhere a hotel/map link needs a tap-out button — stops the click
 // from bubbling into whatever selects/toggles the row it sits on.
@@ -385,9 +386,9 @@ async function promptAddGuestHome(code,bookingId,isArea){
     isArea ? renderAreaDetail(bookingId) : renderAdminDetail(bookingId);
   }catch(e){ toast(e.message); }
 }
-// Custom (off-registry) hotels have no lat/lng column — the distance is
-// derived from whatever coordinates its own Google Maps link encodes, same
-// parser branch-import already uses, so no schema change is needed for this.
+// Custom (off-registry) hotels use typed lat/lng when given; otherwise the
+// distance falls back to whatever coordinates its Google Maps link encodes,
+// same parser branch-import already uses.
 function hotelDistanceKm(h,b){
   if(h.lat!=null && h.lng!=null && hasBranchCoords(b)) return roadKm(haversine(b.blat,b.blng,h.lat,h.lng));
   if(h.custom && h.map){
@@ -694,7 +695,7 @@ function openForm(scheduleId){
   const draft=loadFormDraft(scheduleId);
   if(draft){ S=draft; toast('กู้คืนแบบฟอร์มที่กรอกค้างไว้ให้แล้ว'); renderForm(); return; }
   S={ editId:null, job:j, manualProv:null, hotelSearch:'', checkin:j.start, checkout:j.end,
-      hotelPicks:[], addingHotel:false, newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", busy:false };
+      hotelPicks:[], addingHotel:false, newHotelDraft:{n:'',map:'',p:'',latlng:''}, f:0, m:0, slots:[], note:"", busy:false };
   renderForm();
 }
 function openAdhocForm(){
@@ -702,7 +703,7 @@ function openAdhocForm(){
   if(draft){ S=draft; toast('กู้คืนแบบฟอร์มที่กรอกค้างไว้ให้แล้ว'); renderForm(); return; }
   S={ editId:null, job:{ id:null, branchCode:'', branch:'', prov:null, dist:null, start:'', end:'', adv:0, blat:null, blng:null, adhoc:true },
       manualProv:null, hotelSearch:'', checkin:'', checkout:'', hotelPicks:[], addingHotel:false,
-      newHotelDraft:{n:'',map:'',p:''}, f:0, m:0, slots:[], note:"", missionType:'', missionNote:'', busy:false };
+      newHotelDraft:{n:'',map:'',p:'',latlng:''}, f:0, m:0, slots:[], note:"", missionType:'', missionNote:'', busy:false };
   renderForm();
 }
 function setMissionType(v){
@@ -725,7 +726,7 @@ function openFormEdit(id){
         if(h.custom) return { code:'CUSTOM-'+h.id, name:h.name, map:h.map, price:h.price, custom:true };
         return HOTELS.find(x=>x.name===h.name) || { code:'REG-'+h.id, name:h.name, price:h.price, near:h.near };
       }),
-      addingHotel:false, newHotelDraft:{n:'',map:'',p:''},
+      addingHotel:false, newHotelDraft:{n:'',map:'',p:'',latlng:''},
       f: stored.filter(g=>g.g==='f').length,
       m: stored.filter(g=>g.g==='m').length,
       slots, note:b.note||"", missionType:b.missionType||'', missionNote:b.missionNote||'', busy:false };
@@ -769,6 +770,23 @@ function setAdhocBranch(code){
   rerender(renderForm);
 }
 function resetAdhocBranch(){ S.job.branchCode=''; S.job.branch=''; S.job.prov=null; S.job.dist=null; S.job.blat=null; S.job.blng=null; rerender(renderForm); }
+function filterBranchPicker(qRaw){
+  const box=document.getElementById('branchSearchResults');
+  if(!box) return;
+  const q=(qRaw||'').trim().toLowerCase();
+  const rows=(q ? BRANCHES.filter(b=>(b.name||'').toLowerCase().includes(q)||(b.province||'').toLowerCase().includes(q)) : BRANCHES.slice())
+    .sort((a,b)=>(a.province||'').localeCompare(b.province||'')||(a.name||'').localeCompare(b.name||''))
+    .slice(0,40);
+  box.innerHTML = rows.length
+    ? rows.map(b=>`<div style="padding:11px 12px;border-top:1px solid var(--line);font-size:13px;cursor:pointer" onclick='pickAdhocBranch(${JSON.stringify(b.code)})'>${esc(b.name)}<span style="color:var(--muted);font-size:11px;margin-left:6px">จ.${esc(b.province||'-')}</span></div>`).join('')
+    : `<div style="padding:11px 12px;font-size:13px;color:var(--muted)">ไม่พบสาขา${q?' ที่ตรงกับ "'+esc(qRaw)+'"':''}</div>`;
+  box.style.display='block';
+}
+function pickAdhocBranch(code){
+  const box=document.getElementById('branchSearchResults');
+  if(box){ box.style.display='none'; }
+  setAdhocBranch(code);
+}
 function rebuildSlots(){
   const s=[];
   for(let i=0;i<S.f;i++) s.push(S.slots.find(x=>x.g==='f'&&x.idx===i) || {g:'f',idx:i,team:ME.team_code,code:'',name:'',phone:'',manual:false});
@@ -785,15 +803,20 @@ function toggleHotel(code){
   rerender(renderForm);
 }
 function removeHotelPick(code){ const i=S.hotelPicks.findIndex(x=>x.code===code); if(i>=0)S.hotelPicks.splice(i,1); rerender(renderForm); }
-function toggleAddHotelForm(){ S.addingHotel=!S.addingHotel; S.newHotelDraft={n:'',map:'',p:''}; rerender(renderForm); }
+function toggleAddHotelForm(){ S.addingHotel=!S.addingHotel; S.newHotelDraft={n:'',map:'',p:'',latlng:''}; rerender(renderForm); }
 function setHotelSearch(v){ S.hotelSearch=v; rerender(renderForm); }
-function setNewHotelField(k,v){ if(!S.newHotelDraft)S.newHotelDraft={n:'',map:'',p:''}; S.newHotelDraft[k]=v; }
+function setNewHotelField(k,v){ if(!S.newHotelDraft)S.newHotelDraft={n:'',map:'',p:'',latlng:''}; S.newHotelDraft[k]=v; }
 function confirmNewHotel(){
   const d=S.newHotelDraft||{};
   if(!d.n || !d.p){ toast('กรอกชื่อที่พักและราคาก่อน'); return; }
   if(S.hotelPicks.length>=3){ toast('เลือกได้สูงสุด 3 ที่พัก'); return; }
-  S.hotelPicks.push({ code:'NEW'+Date.now(), name:d.n, map:d.map||'', price:parseInt(d.p,10)||0, custom:true });
-  S.addingHotel=false; S.newHotelDraft={n:'',map:'',p:''};
+  // พิกัดใส่เองมีความสำคัญกว่า — ถ้าไม่ใส่ค่อย fallback ไปแกะจากลิงก์ Google Maps ตอนคำนวณระยะทาง
+  // (ดู hotelDistanceKm ด้านบน ซึ่งเช็ค h.lat/h.lng ก่อนเสมอแล้วค่อย parse จาก h.map)
+  const m=String(d.latlng||'').match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/);
+  const lat=m?parseFloat(m[1]):null, lng=m?parseFloat(m[2]):null;
+  if(d.latlng && lat==null){ toast('พิกัดไม่ถูกต้อง — ใส่แบบ 13.7563, 100.5018'); return; }
+  S.hotelPicks.push({ code:'NEW'+Date.now(), name:d.n, map:d.map||'', price:parseInt(d.p,10)||0, lat, lng, custom:true });
+  S.addingHotel=false; S.newHotelDraft={n:'',map:'',p:'',latlng:''};
   rerender(renderForm);
 }
 function setSlotTeam(i,v){ S.slots[i].team=v; S.slots[i].code=''; S.slots[i].name=''; S.slots[i].phone=''; S.slots[i].manual=false; rerender(renderForm); }
@@ -862,11 +885,14 @@ function renderForm(){
 
   const byProv={};
   BRANCHES.forEach(b=>{ const k=b.province||'ยังไม่ระบุจังหวัด'; (byProv[k]=byProv[k]||[]).push(b); });
-  const branchPicker = (j.adhoc && !j.branchCode) ? `<div class="card"><div class="label">เลือกสาขาที่จะไป</div>
-    <select class="txt" onchange="setAdhocBranch(this.value)">
-     <option value="">— เลือกสาขา —</option>
-     ${Object.keys(byProv).sort().map(p=>`<optgroup label="จ.${esc(p)}">${byProv[p].map(b=>`<option value="${esc(b.code)}">${esc(b.name)}</option>`).join("")}</optgroup>`).join("")}
-    </select></div>` : '';
+  // พิมพ์กรองได้ + ยังเป็นดรอปดาวคลิกเลือกได้ — พิมพ์แล้วกรองสด (ไม่ rerender ทั้งฟอร์มระหว่างพิมพ์ กัน
+  // cursor กระโดด), โฟกัสแล้วโชว์รายชื่อทั้งหมดจัดกลุ่มตามจังหวัดเหมือน select เดิมให้เลือกโดยไม่ต้องพิมพ์ก็ได้
+  const branchPicker = (j.adhoc && !j.branchCode) ? `<div class="card">
+    <div class="label">เลือกสาขาที่จะไป</div>
+    <input class="txt" id="branchSearchInput" placeholder="พิมพ์ชื่อสาขาหรือจังหวัด หรือแตะเพื่อดูทั้งหมด" autocomplete="off"
+      oninput="filterBranchPicker(this.value)" onfocus="filterBranchPicker(this.value)">
+    <div id="branchSearchResults" style="display:none;max-height:280px;overflow-y:auto;border:1.5px solid var(--line);border-top:none;border-radius:0 0 12px 12px;margin-top:-8px"></div>
+  </div>` : '';
 
   const lastBooking = (!S.editId && j.branchCode) ? findLastBookingForBranch(j.branchCode) : null;
   const repeatBtn = lastBooking ? `<button class="btn ghost" style="margin-top:8px" onclick="copyFromLastBooking()">🔁 จองเหมือนครั้งก่อน (${fmtDate(lastBooking.checkin)})</button>` : '';
@@ -907,11 +933,12 @@ function renderForm(){
     const sel=S.hotelPicks.some(x=>x.code===h.code);
     const dist = h._km!=null ? `ห่าง ~${h._km.toFixed(1)} กม.` : (h.dist?`อ.${esc(h.dist)}`:(h.near?('ใกล้ '+esc(h.near)):''));
     const provTag = h.prov && h.prov!==effProv ? ` · จ.${esc(h.prov)}` : '';
+    const stayTag = h.stayCount ? ` · <span style="color:var(--brand);font-weight:600">เคยพักแล้ว ${h.stayCount} ครั้ง</span>` : '';
     return `<div class="hotel ${sel?'sel':''}" role="checkbox" aria-checked="${sel}" tabindex="0"
         onclick="toggleHotel('${esc(h.code)}')"
         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleHotel('${esc(h.code)}')}">
       <div class="chk">${sel?'✓':''}</div>
-      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''} ${mapLinkBtn(h.mapLink)}</div></div>
+      <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${dist}${provTag}${h.choowap?' · Choowap':''}${stayTag} ${mapLinkBtn(h.mapLink)}</div></div>
       <div class="p">${h.price!=null?h.price+'฿<br><small style="font-weight:500;opacity:.7">/ห้อง/คืน</small>':'—'}</div></div>`;
   };
   // Grouped by distance so a 30+ item list isn't one undifferentiated scroll —
@@ -948,15 +975,20 @@ function renderForm(){
       : `<div class="hint" style="padding:6px 0">ไม่พบที่พักที่ตรงกับ "${esc(searchQ)}"</div>`;
   }
 
-  const customHtml=S.hotelPicks.filter(x=>x.custom).map(h=>`<div class="hotel sel">
+  const customHtml=S.hotelPicks.filter(x=>x.custom).map(h=>{
+    const km=hotelDistanceKm(h,j);
+    const distTxt = km!=null ? `ห่าง ~${km.toFixed(1)} กม. · ` : '';
+    return `<div class="hotel sel">
     <div class="chk">✓</div>
-    <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · `:''}ที่พักใหม่ (ไม่อยู่ในทะเบียน)</div></div>
-    <div class="p">${h.price}฿</div><span class="rmv" role="button" tabindex="0" onclick="event.stopPropagation();removeHotelPick('${esc(h.code)}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();event.stopPropagation();removeHotelPick('${esc(h.code)}')}">ลบ</span></div>`).join("");
+    <div class="n"><div class="t">${esc(h.name)}</div><div class="s">${distTxt}${h.map?`<a href="${esc(h.map)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">เปิดแผนที่</a> · `:''}ที่พักใหม่ (ไม่อยู่ในทะเบียน)</div></div>
+    <div class="p">${h.price}฿</div><span class="rmv" role="button" tabindex="0" onclick="event.stopPropagation();removeHotelPick('${esc(h.code)}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();event.stopPropagation();removeHotelPick('${esc(h.code)}')}">ลบ</span></div>`;
+  }).join("");
 
   const addForm = S.addingHotel ? `
     <div class="card" style="margin-top:8px;padding:12px">
       <div class="label">ชื่อที่พัก</div><input class="txt" placeholder="ชื่อที่พักใหม่" value="${esc((S.newHotelDraft||{}).n||'')}" oninput="setNewHotelField('n',this.value)"/>
-      <div class="label" style="margin-top:8px">ลิงก์ Google Maps</div><input class="txt" placeholder="วางลิงก์ https://maps.google.com/..." value="${esc((S.newHotelDraft||{}).map||'')}" oninput="setNewHotelField('map',this.value)"/>
+      <div class="label" style="margin-top:8px">พิกัด (lat,lng — แนะนำให้ใส่ เพื่อคำนวณระยะทางได้)</div><input class="txt" placeholder="เช่น 13.7563, 100.5018" value="${esc((S.newHotelDraft||{}).latlng||'')}" oninput="setNewHotelField('latlng',this.value)"/>
+      <div class="label" style="margin-top:8px">ลิงก์ Google Maps (ไม่บังคับ)</div><input class="txt" placeholder="วางลิงก์ https://maps.google.com/..." value="${esc((S.newHotelDraft||{}).map||'')}" oninput="setNewHotelField('map',this.value)"/>
       <div class="label" style="margin-top:8px">ราคา/คืน (บาท)</div><input class="txt" type="number" placeholder="เช่น 550" value="${esc((S.newHotelDraft||{}).p||'')}" oninput="setNewHotelField('p',this.value)"/>
       <button class="btn" style="margin-top:10px" onclick="confirmNewHotel()">เพิ่มที่พักนี้</button>
       <button class="btn ghost" style="margin-top:8px" onclick="toggleAddHotelForm()">ยกเลิก</button>
@@ -1149,7 +1181,7 @@ async function submitBooking(){
     })),
     hotel_choices: S.hotelPicks.map(h=>(
       h.custom
-        ? { hotel_id:null, custom_name:h.name, custom_map_link:h.map||null, custom_price:h.price||null }
+        ? { hotel_id:null, custom_name:h.name, custom_map_link:h.map||null, custom_price:h.price||null, custom_lat:h.lat??null, custom_lng:h.lng??null }
         : { hotel_id: hotelIdByCode(h.code), custom_price:null }
     ))
   };
