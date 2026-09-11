@@ -63,22 +63,39 @@ async function syncStaffFromSheet() {
   if (exErr) throw new Error('อ่านทะเบียนพนักงานเดิมไม่สำเร็จ: ' + exErr.message);
   const existingCodes = new Set((existing || []).map((r) => r.code));
 
+  // team_code มี FK ไปหาตาราง teams — ชีตพิมพ์ตัวพิมพ์เล็ก/ใหญ่ไม่ตรงกันได้ (เช่น "Area" vs
+  // โค้ดจริง "AREA") ต้อง normalize ก่อนเทียบ ไม่งั้น insert/update จะ error เพราะ FK ไม่ผ่าน
+  const { data: teamRows, error: teamErr } = await supabase.from('teams').select('code');
+  if (teamErr) throw new Error('อ่านรายชื่อทีมไม่สำเร็จ: ' + teamErr.message);
+  const validTeamCodeByUpper = new Map((teamRows || []).map((t) => [t.code.toUpperCase(), t.code]));
+
   const updates = sheetRows.filter((r) => existingCodes.has(r.code));
   const skippedNew = sheetRows.length - updates.length;
 
   // แถวว่างในชีต (เช่น ยังไม่กรอกชื่อเล่น) ไม่ควรลบข้อมูลเดิมในระบบทิ้ง — sync ทับเฉพาะฟิลด์
   // ที่ชีตมีค่าจริงเท่านั้น ส่วน name เป็นคอลัมน์บังคับอยู่แล้วจากการ filter ด้านบน
+  //
+  // แต่ละคนอัพเดตแยกกัน ไม่ปล่อยให้แถวเดียวที่มีปัญหา (เช่น team_code ที่ชีตไม่ตรงกับทีมจริงเลย)
+  // ทำให้การซิงค์ทั้งชุดหยุดกลางคันแล้วคนหลังจากนั้นไม่ได้อัพเดตเลย
+  let updated = 0;
+  const failed = [];
+  const unresolvedTeamCode = [];
   for (const r of updates) {
     const patch = { name: r.name };
-    if (r.team_code) patch.team_code = r.team_code;
+    if (r.team_code) {
+      const resolved = validTeamCodeByUpper.get(r.team_code.toUpperCase());
+      if (resolved) patch.team_code = resolved;
+      else unresolvedTeamCode.push({ code: r.code, team_code: r.team_code });
+    }
     if (r.nickname) patch.nickname = r.nickname;
     if (r.gender) patch.gender = r.gender;
     if (r.phone) patch.phone = r.phone;
     const { error } = await supabase.from('employees').update(patch).eq('code', r.code);
-    if (error) throw new Error(`อัพเดตพนักงาน ${r.code} ไม่สำเร็จ: ${error.message}`);
+    if (error) failed.push({ code: r.code, message: error.message });
+    else updated++;
   }
 
-  return { updated: updates.length, skippedNew, syncedAt: new Date().toISOString() };
+  return { updated, failed, skippedNew, unresolvedTeamCode, syncedAt: new Date().toISOString() };
 }
 
 module.exports = { syncStaffFromSheet, parseCsv, splitNicknameGender };
