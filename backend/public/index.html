@@ -1817,25 +1817,46 @@ async function renderUrgentNow(){
 }
 
 /* ================= เวลาดำเนินการเฉลี่ย (cycle time) ================= */
+let CYCLE_TIME_DATA=null, CYCLE_TIME_FILTER='';
 async function renderCycleTime(){
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>เวลาดำเนินการเฉลี่ย</h1></div>
    <div class="body"><div class="hint">กำลังโหลด...</div></div></div>`;
   try{
-    const d=await apiGet('/admin-import?action=cycle_time&actor='+encodeURIComponent(ME.code));
-    const rowsOf = (list) => list.map(p=>`<div class="copyrow"><span class="k">${esc(p.name)}</span><span class="v">${p.avg_hours} ชม. เฉลี่ย (${p.count} รายการ)</span></div>`).join('') || '<div class="hint">ยังไม่มีข้อมูล</div>';
-    $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>เวลาดำเนินการเฉลี่ย</h1></div>
-     <div class="body">
-      <div class="hint">คำนวณจากประวัติการเปลี่ยนสถานะจริงของทุกการจอง</div>
-      <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
-       <div><div class="val" style="color:var(--amber)">${d.area_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ย AREA เลือกที่พัก</div></div>
-       <div><div class="val" style="color:var(--brand)">${d.admin_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยเจ้าของอนุมัติ</div></div>
-       <div><div class="val" style="color:var(--success)">${d.confirm_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยได้เลขยืนยัน</div></div>
-      </div></div>
-      <div class="card"><div class="label">แยกตามคนที่เลือกที่พัก</div>${rowsOf(d.area_by_approver||[])}</div>
-      <div class="card"><div class="label">แยกตามคนที่อนุมัติขั้นสุดท้าย</div>${rowsOf(d.admin_by_person||[])}</div>
-      <div class="card"><div class="label">แยกตามคนที่กรอกเลขยืนยัน</div>${rowsOf(d.confirm_by_person||[])}</div>
-     </div></div>`;
+    CYCLE_TIME_DATA=await apiGet('/admin-import?action=cycle_time&actor='+encodeURIComponent(ME.code));
+    drawCycleTime();
   }catch(e){ toast('โหลดไม่สำเร็จ: '+e.message); renderAdminQueue(); }
+}
+function setCycleTimeFilter(v){ CYCLE_TIME_FILTER=v; rerender(drawCycleTime); }
+function cycleTimeRowHtml(r){
+  const label=STATUS_LOG_LABEL[r.status]||r.status;
+  const stage=(h,by)=>h==null?'—':`${h} ชม.${by?` (${esc(by)})`:''}`;
+  return `<div class="job" role="button" tabindex="0" onclick="renderAdminDetail('${esc(r.booking_id)}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAdminDetail('${esc(r.booking_id)}')}">
+    <div class="g"><div class="t">${esc(r.branch_name||'-')} <span class="pill wait" style="margin-left:4px">${esc(label)}</span></div>
+     <div class="s">${esc(r.team_code||'-')} · ผู้จอง ${esc(r.created_by||'-')} · เข้าพัก ${fmtDate(r.checkin_date)}</div>
+     <div class="s" style="margin-top:3px">AREA เลือก ${stage(r.area_hours,r.area_by)} · อนุมัติ ${stage(r.admin_hours,r.admin_by)} · เลขยืนยัน ${stage(r.confirm_hours,r.confirm_by)}</div></div>
+    <div class="chev">›</div></div>`;
+}
+function drawCycleTime(){
+  const d=CYCLE_TIME_DATA||{};
+  const rowsOf = (list) => (list||[]).map(p=>`<div class="copyrow"><span class="k">${esc(p.name)}</span><span class="v">${p.avg_hours} ชม. เฉลี่ย (${p.count} รายการ)</span></div>`).join('') || '<div class="hint">ยังไม่มีข้อมูล</div>';
+  const q=CYCLE_TIME_FILTER.trim().toLowerCase();
+  const allRows=d.rows||[];
+  const filtered=allRows.filter(r=>!q || (r.team_code||'').toLowerCase().includes(q) || (r.branch_name||'').toLowerCase().includes(q) || (r.created_by||'').toLowerCase().includes(q));
+  $("#app").innerHTML=`<div class="screen"><div class="appbar"><span class="back" onclick="renderAdminQueue()">‹</span><h1>เวลาดำเนินการเฉลี่ย</h1></div>
+   <div class="body">
+    <div class="hint">คำนวณจากประวัติการเปลี่ยนสถานะจริงของทุกการจอง</div>
+    <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
+     <div><div class="val" style="color:var(--amber)">${d.area_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ย AREA เลือกที่พัก</div></div>
+     <div><div class="val" style="color:var(--brand)">${d.admin_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยเจ้าของอนุมัติ</div></div>
+     <div><div class="val" style="color:var(--success)">${d.confirm_avg_hours??'—'}</div><div class="label" style="margin:0">ชม. เฉลี่ยได้เลขยืนยัน</div></div>
+    </div></div>
+    <div class="card"><div class="label">แยกตามคนที่เลือกที่พัก</div>${rowsOf(d.area_by_approver)}</div>
+    <div class="card"><div class="label">แยกตามคนที่อนุมัติขั้นสุดท้าย</div>${rowsOf(d.admin_by_person)}</div>
+    <div class="card"><div class="label">แยกตามคนที่กรอกเลขยืนยัน</div>${rowsOf(d.confirm_by_person)}</div>
+    <div class="label" style="margin-top:14px">รายละเอียดแต่ละคำขอ (${filtered.length}/${allRows.length} รายการ)</div>
+    <input class="txt" placeholder="ค้นหาทีม/สาขา/ผู้จอง" value="${esc(CYCLE_TIME_FILTER)}" oninput="setCycleTimeFilter(this.value)"/>
+    <div style="margin-top:10px">${filtered.map(cycleTimeRowHtml).join('')||'<div class="hint">ไม่พบรายการ</div>'}</div>
+   </div></div>`;
 }
 
 /* ================= จัดการพนักงาน (roster) ================= */

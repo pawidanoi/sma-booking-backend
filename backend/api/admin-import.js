@@ -287,6 +287,40 @@ async function cycleTime(res) {
   };
 
   const avgOf = (rows) => rows.length ? Math.round((rows.reduce((a, r) => a + r.hours, 0) / rows.length) * 10) / 10 : null;
+  const hoursOf = (a, b) => a && b ? Math.round(((new Date(b) - new Date(a)) / 3600000) * 10) / 10 : null;
+
+  // ตารางระดับรายคำขอ ("ใครจองช้าเร็ว อนุมัติกี่วัน") — เสริมจากค่าเฉลี่ยรายคนด้านบน ให้เห็นเป็น
+  // รายแผนงานจริง ไม่ใช่แค่ภาพรวม
+  const { data: bookingRows } = await supabase
+    .from('bookings')
+    .select('id, team_code, branch_code, checkin_date, checkout_date, status, created_by_employee, created_at, branches(name)')
+    .order('created_at', { ascending: false });
+
+  const rows = (bookingRows || []).map((b) => {
+    const logRows = byBooking.get(b.id) || [];
+    const at = (status) => logRows.find((r) => r.to_status === status);
+    const submitted = at('ส่งคำขอ');
+    const hotelPicked = at('รอเจ้าของอนุมัติ');
+    const finalApproved = at('รอเลขยืนยันโรงแรม');
+    const confirmed = at('จองสำเร็จ');
+    const areaFrom = submitted ? submitted.changed_at : null;
+    const adminFrom = (hotelPicked || submitted) ? (hotelPicked || submitted).changed_at : null;
+    return {
+      booking_id: b.id,
+      team_code: b.team_code,
+      branch_name: (b.branches || {}).name || null,
+      checkin_date: b.checkin_date,
+      checkout_date: b.checkout_date,
+      status: b.status,
+      created_by: nameByCode.get(b.created_by_employee) || b.created_by_employee,
+      area_hours: hoursOf(areaFrom, hotelPicked ? hotelPicked.changed_at : null),
+      area_by: hotelPicked ? (nameByCode.get(hotelPicked.changed_by) || hotelPicked.changed_by) : null,
+      admin_hours: hoursOf(adminFrom, finalApproved ? finalApproved.changed_at : null),
+      admin_by: finalApproved ? (nameByCode.get(finalApproved.changed_by) || finalApproved.changed_by) : null,
+      confirm_hours: hoursOf(finalApproved ? finalApproved.changed_at : null, confirmed ? confirmed.changed_at : null),
+      confirm_by: confirmed ? (nameByCode.get(confirmed.changed_by) || confirmed.changed_by) : null
+    };
+  });
 
   return json(res, 200, {
     area_avg_hours: avgOf(areaHours),
@@ -294,7 +328,8 @@ async function cycleTime(res) {
     confirm_avg_hours: avgOf(confirmHours),
     area_by_approver: groupBy(areaHours),
     admin_by_person: groupBy(adminHours),
-    confirm_by_person: groupBy(confirmHours)
+    confirm_by_person: groupBy(confirmHours),
+    rows
   });
 }
 
