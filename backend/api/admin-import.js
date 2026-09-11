@@ -2,6 +2,7 @@ const { supabase } = require('../lib/supabase');
 const { json, fail, readBody } = require('../lib/http');
 const { getActor, isAdmin, AREA_APPROVER_POSITION, isAreaApprover, getAreaTeamCodes } = require('../lib/auth');
 const { push, qrUri, qrPostback, liffLink } = require('../lib/line');
+const { syncStaffFromSheet } = require('../lib/staff-sync');
 
 // Vercel Hobby caps a deployment at 12 serverless functions — combines what
 // were 5 separate admin-only files (schedule-import, branch-import,
@@ -55,6 +56,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'hotel_maplink_apply') return hotelMaplinkApply(res, body);
     if (body.action === 'hotel_remove') return hotelRemove(res, body);
     if (body.action === 'hotel_coords_apply') return hotelCoordsApply(res, body);
+    if (body.action === 'staff_sync_now') return staffSyncNow(res);
     return fail(res, 400, `ไม่รู้จัก action: ${body.action}`);
   }
 
@@ -305,6 +307,15 @@ async function employeeList(res) {
     .order('team_code');
   if (error) return fail(res, 500, error.message);
   return json(res, 200, { employees: data || [] });
+}
+
+async function staffSyncNow(res) {
+  try {
+    const result = await syncStaffFromSheet();
+    return json(res, 200, result);
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
 }
 
 async function hotelList(res) {

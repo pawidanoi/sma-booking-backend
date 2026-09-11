@@ -1,5 +1,6 @@
 const { supabase } = require('../lib/supabase');
 const { push, qrPostback, qrUri, liffLink } = require('../lib/line');
+const { syncStaffFromSheet } = require('../lib/staff-sync');
 
 // Runs daily via Vercel Cron (see vercel.json — 02:00 UTC = 09:00 Thailand time).
 // Two independent stages:
@@ -12,10 +13,19 @@ module.exports = async function handler(req, res) {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
+  // ซิงค์ทะเบียนพนักงานจากชีต HR ก่อนงานแจ้งเตือน — best-effort เหมือนกันเพราะถ้าชีต
+  // ดึงไม่ได้ตอนนี้ (เช่น เน็ตเวิร์กสะดุด) ไม่ควรทำให้การแจ้งเตือนรายวันพังไปด้วย
+  let staffSync;
+  try {
+    staffSync = await syncStaffFromSheet();
+  } catch (e) {
+    staffSync = { error: e.message };
+  }
+
   const stage1 = await runStage1(today);
   const stage2to4 = await runBookingStages(today);
 
-  res.status(200).json({ stage1, stage2to4 });
+  res.status(200).json({ staffSync, stage1, stage2to4 });
 };
 
 // ---------------------------------------------------------------- stage 1: remind employee to submit (day -5, -3)

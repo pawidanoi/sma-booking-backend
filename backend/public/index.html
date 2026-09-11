@@ -1852,8 +1852,17 @@ function drawEmployeeRoster(){
    <div class="body">
     <input class="txt" placeholder="ค้นหารหัส/ชื่อ/ทีม" value="${esc(EMP_ROSTER_FILTER)}" oninput="setEmpRosterFilter(this.value)"/>
     <div class="addnew" onclick="openEmployeeAdd()">+ เพิ่มพนักงานใหม่</div>
+    <button class="btn ghost" style="margin-top:8px" onclick="syncStaffNow()">🔄 ซิงค์ชื่อจากชีต HR</button>
     <div style="margin-top:10px">${rows||'<div class="hint">ไม่พบพนักงาน</div>'}</div>
    </div></div>`;
+}
+async function syncStaffNow(){
+  toast('กำลังซิงค์จากชีต HR...');
+  try{
+    const d=await apiSend('/admin-import','POST',{ action:'staff_sync_now' });
+    toast(`ซิงค์แล้ว: อัพเดต ${d.updated} คน${d.skippedNew?` · ข้ามรหัสใหม่ ${d.skippedNew} คน (ยังไม่มีในระบบ)`:''}`);
+    renderEmployeeRoster();
+  }catch(e){ toast('ซิงค์ไม่สำเร็จ: '+e.message); }
 }
 let EMP_NEW_GENDER=null;
 function openEmployeeAdd(){
