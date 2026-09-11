@@ -57,19 +57,26 @@ module.exports = async function handler(req, res) {
       .select('id, team_code, branch_code, date_start, date_end, advance_days')
       .order('date_start'),
     // "เคยพักแล้ว N ครั้ง" ต่อที่พักในทะเบียน — นับจากคำขอที่จองสำเร็จจริงเท่านั้น
-    supabase
-      .from('booking_hotel_choices')
-      .select('hotel_id, bookings!inner(status)')
-      .eq('bookings.status', 'จองสำเร็จ')
-      .not('hotel_id', 'is', null)
+    // สองขั้นตอนแยกกันเพราะ booking_hotel_choices มี FK ไปหา bookings มากกว่า
+    // หนึ่งเส้น (embed แบบ bookings!inner(...) เลยกำกวมและถูก Supabase ปฏิเสธ)
+    supabase.from('bookings').select('id').eq('status', 'จองสำเร็จ')
   ]);
 
   const firstError = [branchesRes, hotelsRes, teamsRes, staffRes, scheduleRes, hotelStaysRes].find((r) => r.error);
   if (firstError) return fail(res, 500, firstError.error.message);
 
+  const doneBookingIds = (hotelStaysRes.data || []).map((b) => b.id);
   const stayCountByHotelId = new Map();
-  for (const row of hotelStaysRes.data || []) {
-    stayCountByHotelId.set(row.hotel_id, (stayCountByHotelId.get(row.hotel_id) || 0) + 1);
+  if (doneBookingIds.length) {
+    const { data: choiceRows, error: choicesErr } = await supabase
+      .from('booking_hotel_choices')
+      .select('hotel_id')
+      .in('booking_id', doneBookingIds)
+      .not('hotel_id', 'is', null);
+    if (choicesErr) return fail(res, 500, choicesErr.message);
+    for (const row of choiceRows || []) {
+      stayCountByHotelId.set(row.hotel_id, (stayCountByHotelId.get(row.hotel_id) || 0) + 1);
+    }
   }
   const hotelsWithStayCount = (hotelsRes.data || []).map((h) => ({ ...h, stay_count: stayCountByHotelId.get(h.id) || 0 }));
 
