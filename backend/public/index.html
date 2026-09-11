@@ -67,6 +67,9 @@
   .pill.ok{background:var(--success-soft);color:var(--success)}
   .pill.wait{background:var(--amber-soft);color:var(--amber)}
   .pill.area{background:#efe7f6;color:#6b3fa0}
+  .pill.mine{background:var(--brand-soft);color:var(--brand)}
+  .qtile{cursor:pointer;padding:8px 4px;border-radius:12px;flex:1}
+  .qtile.active{background:var(--brand-soft)}
   .btn{display:block;width:100%;border:0;font-family:inherit;font-weight:700;font-size:15px;padding:14px;border-radius:14px;background:var(--brand);color:#fff;cursor:pointer;margin-top:4px}
   .btn:active{transform:translateY(1px)}
   .btn.ghost{background:#fff;color:var(--brand);border:1.5px solid var(--brand)}
@@ -627,6 +630,8 @@ function goHome(){
 }
 
 /* ================= พนักงาน ================= */
+let HOME_QUEUE_FILTER=null;
+function setHomeQueueFilter(status){ HOME_QUEUE_FILTER = HOME_QUEUE_FILTER===status ? null : status; rerender(renderHome); }
 function renderHome(){
   const jobs=jobsForMyTeam();
   const rows=jobs.map(j=>{
@@ -644,31 +649,53 @@ function renderHome(){
   // Ad-hoc bookings the employee submitted themselves, not tied to a job row above
   // (avoid listing the same booking twice if it happens to match a job).
   const jobIdsShown = new Set(jobs.map(j=>j.id));
-  const mine = BOOKINGS.filter(b=>b.submittedByCode===ME.code && !(b.jobId && jobIdsShown.has(b.jobId)));
+  const mineAll = BOOKINGS.filter(b=>b.submittedByCode===ME.code && !(b.jobId && jobIdsShown.has(b.jobId)));
+  const mine = HOME_QUEUE_FILTER ? mineAll.filter(b=>b.status===HOME_QUEUE_FILTER) : mineAll;
   const mineRows = mine.map(b=>`<div class="job" role="button" tabindex="0" onclick="renderStatus('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderStatus('${b.id}')}">
     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${(b.derived.people!=null?b.derived.people:0)}<small>คน</small></div>
     <div class="g"><div class="t">${esc(b.branch)}</div><div class="s">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
      <div style="margin-top:5px">${pillOf(b)}</div></div><div class="chev">›</div></div>`).join("");
+  const qtile=(label,status,color)=>{ const n=mineAll.filter(b=>b.status===status).length; return `<div class="qtile${HOME_QUEUE_FILTER===status?' active':''}" role="button" tabindex="0" onclick="setHomeQueueFilter('${status}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();setHomeQueueFilter('${status}')}">
+    <div class="val" style="color:${color}">${n}</div><div class="label" style="margin:0">${label}</div></div>`; };
+  const mineTiles = mineAll.length ? `<div class="card" style="margin-top:14px"><div style="display:flex;justify-content:space-around;text-align:center">
+     ${qtile('ส่งคำขอ','ส่งคำขอ','var(--amber)')}
+     ${qtile('รอเจ้าของอนุมัติ','รอเจ้าของอนุมัติ','var(--brand2)')}
+     ${qtile('รอเลขยืนยัน','รอเลขยืนยันโรงแรม','var(--amber)')}
+     ${qtile('จองสำเร็จ','จองสำเร็จ','var(--success)')}
+    </div></div>` : '';
 
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>งานที่ต้องจองที่พัก</h1><span class="sub">${esc(ME.team_code)}</span></div>
    <div class="body"><div class="hint">แผนงานบอกว่าต้องไปสาขาไหน — วันเข้าพักคุณเลือกเองในฟอร์ม</div>
     <button class="btn ghost" onclick="openAdhocForm()">+ จองเพิ่ม (นอกแผนงาน)</button>
     ${rows}
-    ${mineRows?`<div class="label" style="margin-top:18px">คำขอนอกแผนงานของฉัน</div>${mineRows}`:''}
+    ${mineAll.length?`<div class="label" style="margin-top:18px">คำขอนอกแผนงานของฉัน</div>${mineTiles}`:''}
+    ${mineRows||(HOME_QUEUE_FILTER?'<div class="hint">ไม่พบรายการในสถานะนี้</div>':'')}
     <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
    </div></div>`;
 }
 
+let SPECIAL_QUEUE_FILTER=null;
+function setSpecialQueueFilter(status){ SPECIAL_QUEUE_FILTER = SPECIAL_QUEUE_FILTER===status ? null : status; rerender(renderSpecialHome); }
 function renderSpecialHome(){
-  const mine=BOOKINGS.filter(b=>b.submittedByCode===ME.code);
+  const mineAll=BOOKINGS.filter(b=>b.submittedByCode===ME.code);
+  const mine = SPECIAL_QUEUE_FILTER ? mineAll.filter(b=>b.status===SPECIAL_QUEUE_FILTER) : mineAll;
   const rows=mine.map(b=>`<div class="job" role="button" tabindex="0" onclick="renderStatus('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderStatus('${b.id}')}">
     <div class="d" style="background:var(--amber-soft);color:var(--amber)">${(b.derived.people!=null?b.derived.people:0)}<small>คน</small></div>
     <div class="g"><div class="t">${esc(b.branch)}</div><div class="s">${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
      <div style="margin-top:5px">${pillOf(b)}</div></div><div class="chev">›</div></div>`).join("");
+  const qtile=(label,status,color)=>{ const n=mineAll.filter(b=>b.status===status).length; return `<div class="qtile${SPECIAL_QUEUE_FILTER===status?' active':''}" role="button" tabindex="0" onclick="setSpecialQueueFilter('${status}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();setSpecialQueueFilter('${status}')}">
+    <div class="val" style="color:${color}">${n}</div><div class="label" style="margin:0">${label}</div></div>`; };
+  const tiles = mineAll.length ? `<div class="card" style="margin-top:14px"><div style="display:flex;justify-content:space-around;text-align:center">
+     ${qtile('ส่งคำขอ','ส่งคำขอ','var(--amber)')}
+     ${qtile('รอเจ้าของอนุมัติ','รอเจ้าของอนุมัติ','var(--brand2)')}
+     ${qtile('รอเลขยืนยัน','รอเลขยืนยันโรงแรม','var(--amber)')}
+     ${qtile('จองสำเร็จ','จองสำเร็จ','var(--success)')}
+    </div></div>` : '';
   $("#app").innerHTML=`<div class="screen"><div class="appbar"><h1>ขอที่พัก</h1><span class="sub">${esc(ME.team_code)}</span></div>
    <div class="body"><div class="hint">ตำแหน่งนี้ไม่มีแผนงานทีม SMA ประจำ — เลือกสาขาที่จะไปและวันเข้าพักเองได้เลย</div>
     <button class="btn" onclick="openAdhocForm()">+ จองเพิ่ม</button>
-    ${rows?`<div class="label" style="margin-top:18px">คำขอของฉัน</div>${rows}`:''}
+    ${mineAll.length?`<div class="label" style="margin-top:18px">คำขอของฉัน</div>${tiles}`:''}
+    ${rows||(SPECIAL_QUEUE_FILTER?'<div class="hint">ไม่พบรายการในสถานะนี้</div>':'')}
     <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
    </div></div>`;
 }
@@ -1304,6 +1331,8 @@ async function applyChange(){
 }
 
 /* ================= แอดมิน ================= */
+let ADMIN_QUEUE_FILTER=null;
+function setAdminQueueFilter(key){ ADMIN_QUEUE_FILTER = ADMIN_QUEUE_FILTER===key ? null : key; rerender(renderAdminQueue); }
 function renderAdminQueue(){
   const order={'ส่งคำขอ':0,'รอเจ้าของอนุมัติ':1,'รอเลขยืนยันโรงแรม':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
   const sorted=BOOKINGS.slice().sort((a,b)=>{
@@ -1312,21 +1341,28 @@ function renderAdminQueue(){
     if(!aFlag && bFlag) return 1;
     return (order[a.status]??9)-(order[b.status]??9);
   });
-  const rows=sorted.map(b=>{
+  const shown = !ADMIN_QUEUE_FILTER ? sorted
+    : ADMIN_QUEUE_FILTER==='flagged' ? sorted.filter(b=>b.change||(b.joinRequests&&b.joinRequests.length))
+    : sorted.filter(b=>b.status===ADMIN_QUEUE_FILTER);
+  const rows=shown.map(b=>{
     const src=b.src==='AREA'?`<span class="pill area">AREA</span>`:`<span class="pill ok">SMA</span>`;
     const adhoc=b.adhoc?`<span class="pill wait">จองเพิ่ม</span>`:'';
     const joinBadge=(b.joinRequests&&b.joinRequests.length)?`<span class="pill soon">ขอเข้าร่วม</span>`:'';
     const autoBadge=b.autoApproved?`<span class="pill ok">✓ อัตโนมัติ</span>`:'';
+    const mineBadge = b.submittedByCode===ME.code ? '<span class="pill mine">🙋 จองให้ตัวเอง</span>' : '';
     const d=b.derived||{};
     return `<div class="job" role="button" tabindex="0" onclick="renderAdminDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAdminDetail('${b.id}')}">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
-      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${autoBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
+      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${src}${adhoc}${joinBadge}${autoBadge}${mineBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
   const waiting=BOOKINGS.filter(b=>b.status==='ส่งคำขอ').length;
   const awaitingMe=BOOKINGS.filter(b=>b.status==='รอเจ้าของอนุมัติ').length;
-  const flagged=BOOKINGS.filter(b=>b.change).length;
+  const flagged=BOOKINGS.filter(b=>b.change||(b.joinRequests&&b.joinRequests.length)).length;
+  const done=BOOKINGS.filter(b=>b.status==='จองสำเร็จ').length;
+  const qtile=(label,key,count,color)=>`<div class="qtile${ADMIN_QUEUE_FILTER===key?' active':''}" role="button" tabindex="0" onclick="setAdminQueueFilter('${key}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();setAdminQueueFilter('${key}')}">
+    <div class="val" style="color:${color}">${count}</div><div class="label" style="margin:0">${label}</div></div>`;
   const adminNav = `<div class="adminnav">
     <div class="grp"><div class="grp-label">ต้องทำตอนนี้</div><div class="chips">
       ${navChip('🔥 ต้องรีบดูตอนนี้','renderUrgentNow()','urgent')}
@@ -1346,17 +1382,18 @@ function renderAdminQueue(){
       ${navChip('เวลาดำเนินการเฉลี่ย','renderCycleTime()')}
     </div></div>
    </div>`;
+  const filterLabel = ADMIN_QUEUE_FILTER==='flagged' ? 'มีเรื่องแจ้ง' : (STATUS_LOG_LABEL[ADMIN_QUEUE_FILTER]||ADMIN_QUEUE_FILTER);
   $("#app").innerHTML=`<div class="screen"><div class="appbar">
     <div style="flex:1"><h1>คำขอเข้ามา</h1><span class="sub">แอดมิน · ${BOOKINGS.length} รายการ</span></div></div>
    <div class="body">${adminNav}
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
-     <div><div class="val" style="color:var(--amber)">${waiting}</div><div class="label" style="margin:0">รอเลือกที่พัก</div></div>
-     <div><div class="val" style="color:var(--brand2)">${awaitingMe}</div><div class="label" style="margin:0">รอฉันอนุมัติ</div></div>
-     <div><div class="val" style="color:var(--danger)">${flagged}</div><div class="label" style="margin:0">มีเรื่องแจ้ง</div></div>
-     <div><div class="val" style="color:var(--success)">${BOOKINGS.filter(b=>b.status==='จองสำเร็จ').length}</div><div class="label" style="margin:0">จองเสร็จ</div></div>
+     ${qtile('รอเลือกที่พัก','ส่งคำขอ',waiting,'var(--amber)')}
+     ${qtile('รอฉันอนุมัติ','รอเจ้าของอนุมัติ',awaitingMe,'var(--brand2)')}
+     ${qtile('มีเรื่องแจ้ง','flagged',flagged,'var(--danger)')}
+     ${qtile('จองเสร็จ','จองสำเร็จ',done,'var(--success)')}
     </div></div>
-    <div class="hint">ตรวจผังห้อง + เลือกที่พักเอง หรืออนุมัติงานที่ AREA เลือกที่พักให้แล้ว</div>
-    ${rows||'<div class="hint">ยังไม่มีคำขอเข้ามา</div>'}</div></div>`;
+    <div class="hint">ตรวจผังห้อง + เลือกที่พักเอง หรืออนุมัติงานที่ AREA เลือกที่พักให้แล้ว${ADMIN_QUEUE_FILTER?` · กำลังกรอง: ${esc(filterLabel)} — <a onclick="setAdminQueueFilter('${ADMIN_QUEUE_FILTER}')" style="color:var(--brand);font-weight:700;cursor:pointer">ล้างตัวกรอง</a>`:''}</div>
+    ${rows||'<div class="hint">ไม่พบรายการในสถานะนี้</div>'}</div></div>`;
 }
 
 async function adminAction(bookingId, action, extra, okMsg, after){
@@ -2382,27 +2419,35 @@ function renderAdminDetail(id){
 // (choose a hotel, copy the summary to call/LINE the hotel, submit for the
 // owner's approval, enter the confirmation number once the hotel confirms)
 // — so this reuses renderAdminDetail() itself, same as the admin queue does.
+let AREA_QUEUE_FILTER=null;
+function setAreaQueueFilter(status){ AREA_QUEUE_FILTER = AREA_QUEUE_FILTER===status ? null : status; rerender(renderAreaQueue); }
 function renderAreaQueue(){
   const order={'ส่งคำขอ':0,'รอเจ้าของอนุมัติ':1,'รอเลขยืนยันโรงแรม':2,'ติดปัญหา':3,'ต้องแก้ไข':4,'จองสำเร็จ':5};
-  const pending = BOOKINGS.filter(b=>b.status==='ส่งคำขอ');
   const sorted=BOOKINGS.slice().sort((a,b)=>(order[a.status]??9)-(order[b.status]??9));
-  const rows=sorted.map(b=>{
+  const shown = AREA_QUEUE_FILTER ? sorted.filter(b=>b.status===AREA_QUEUE_FILTER) : sorted;
+  const rows=shown.map(b=>{
     const d=b.derived||{};
+    const mineBadge = b.submittedByCode===ME.code ? '<span class="pill mine">🙋 จองให้ตัวเอง</span>' : '';
     return `<div class="job" role="button" tabindex="0" onclick="renderAdminDetail('${b.id}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();renderAdminDetail('${b.id}')}">
      <div class="d" style="background:var(--amber-soft);color:var(--amber)">${d.people||0}<small>คน</small></div>
      <div class="g"><div class="t">${esc(b.branch)}</div>
       <div class="s">${esc(b.team)} · ${fmtDate(b.checkin)}–${fmtDate(b.checkout)}</div>
-      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${pillOf(b)}</div></div><div class="chev">›</div></div>`;
+      <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap">${mineBadge}${pillOf(b)}</div></div><div class="chev">›</div></div>`;
   }).join("");
+  const tileCount=(status)=>BOOKINGS.filter(b=>b.status===status).length;
+  const tile=(label,status,color)=>`<div class="qtile${AREA_QUEUE_FILTER===status?' active':''}" role="button" tabindex="0" onclick="setAreaQueueFilter('${status}')" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();setAreaQueueFilter('${status}')}">
+    <div class="val" style="color:${color}">${tileCount(status)}</div><div class="label" style="margin:0">${label}</div></div>`;
   $("#app").innerHTML=`<div class="screen"><div class="appbar">
     <div style="flex:1"><h1>งานที่ต้องจอง</h1><span class="sub">${esc(nickOf(ME))} · ${BOOKINGS.length} รายการ</span></div></div>
    <div class="body">
     <div class="card"><div style="display:flex;justify-content:space-around;text-align:center">
-     <div><div class="val" style="color:var(--amber)">${pending.length}</div><div class="label" style="margin:0">รอเลือกที่พัก</div></div>
-     <div><div class="val" style="color:var(--success)">${BOOKINGS.length-pending.length}</div><div class="label" style="margin:0">ส่งต่อแล้ว</div></div>
+     ${tile('รอเลือกที่พัก','ส่งคำขอ','var(--amber)')}
+     ${tile('รอเจ้าของอนุมัติ','รอเจ้าของอนุมัติ','var(--brand2)')}
+     ${tile('รอเลขยืนยัน','รอเลขยืนยันโรงแรม','var(--amber)')}
+     ${tile('จองสำเร็จ','จองสำเร็จ','var(--success)')}
     </div></div>
-    <div class="hint">เลือกที่พัก ก็อบข้อมูลไปจองกับโรงแรม แล้วส่งขออนุมัติจากเจ้าของระบบ</div>
-    ${rows||'<div class="hint">ยังไม่มีคำขอเข้ามา</div>'}
+    <div class="hint">เลือกที่พัก ก็อบข้อมูลไปจองกับโรงแรม แล้วส่งขออนุมัติจากเจ้าของระบบ${AREA_QUEUE_FILTER?` · กำลังกรอง: ${esc(STATUS_LOG_LABEL[AREA_QUEUE_FILTER]||AREA_QUEUE_FILTER)} — <a onclick="setAreaQueueFilter('${AREA_QUEUE_FILTER}')" style="color:var(--brand);font-weight:700;cursor:pointer">ล้างตัวกรอง</a>`:''}</div>
+    ${rows||'<div class="hint">ไม่พบรายการในสถานะนี้</div>'}
     <a class="navlink" onclick="renderAreaPendingSchedule()">ดูงานของทีมที่ดูแล — ค้างจองอะไรบ้าง</a>
     <a class="navlink" onclick="renderJoinBrowse()">มีเพื่อนไปด้วยกันไหม? ดูห้องที่มีเตียงว่าง</a>
    </div></div>`;
