@@ -1,5 +1,5 @@
 const { supabase } = require('../lib/supabase');
-const { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink } = require('../lib/line');
+const { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink, dashboardLink } = require('../lib/line');
 const { startBookingFlow, handleFlowPostback, handleFlowMessage } = require('../lib/line-booking-flow');
 const { linkEmployeeByCode } = require('../lib/link-employee');
 
@@ -103,7 +103,7 @@ async function onPostback(event) {
 
     case 'status':
       await reply(event.replyToken, [
-        { type: 'text', text: 'เช็คสถานะการจองล่าสุดของคุณได้ที่นี่เลยค่ะ', quickReply: { items: [qrUri('📦 เปิดหน้าสถานะ', liffLink('/home'))] } }
+        { type: 'text', text: 'เช็คสถานะการจองล่าสุดของคุณได้ที่นี่เลยค่ะ', quickReply: { items: [qrUri('📦 เปิดหน้าสถานะ', dashboardLink())] } }
       ]);
       return;
 
@@ -128,7 +128,7 @@ async function onPostback(event) {
 
     case 'cancel_notice':
       await reply(event.replyToken, [
-        { type: 'text', text: 'กดยกเลิกได้ในหน้าสถานะการจองเลยค่ะ ระบบจะขอเหตุผลสั้นๆ ก่อนส่งให้แอดมินนะ', quickReply: { items: [qrUri('📦 เปิดหน้าสถานะ', liffLink('/home'))] } }
+        { type: 'text', text: 'กดยกเลิกได้ในหน้าสถานะการจองเลยค่ะ ระบบจะขอเหตุผลสั้นๆ ก่อนส่งให้แอดมินนะ', quickReply: { items: [qrUri('📦 เปิดหน้าสถานะ', dashboardLink())] } }
       ]);
       return;
 

@@ -79,10 +79,12 @@ function menuButtonUri(label, uri, style) {
     height: 'sm'
   };
 }
-// Public dashboard link — plain page, not routed through the LIFF app (it works
-// fully logged-out, so it doesn't need the LIFF WebView's employee context).
+// This system (sma-booking-backend) is retired — the dashboard/status page now
+// lives in the newer sma-approval-console app instead. Plain link (not routed
+// through the LIFF app): that app has its own employee-code login, so it doesn't
+// need the LIFF WebView's employee context.
 function dashboardLink() {
-  return `${process.env.PUBLIC_BASE_URL || 'https://sma-booking-backend.vercel.app'}/dashboard.html`;
+  return process.env.APPROVAL_CONSOLE_URL || 'https://sma-approval-console.onrender.com/';
 }
 function mainMenuFlex() {
   return {
@@ -127,4 +129,4 @@ function liffLink(path) {
   return `${LIFF_URL}${path || ''}`;
 }
 
-module.exports = { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink };
+module.exports = { verifySignature, reply, push, mainMenuQuickReply, mainMenuFlex, qrPostback, qrUri, liffLink, dashboardLink };
